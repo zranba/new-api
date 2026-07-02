@@ -287,14 +287,17 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
         data.status = 2;
         res = await API.put('/api/token/?status_only=true', data);
         break;
+      case 'reset_quota':
+        res = await API.post(`/api/token/${id}/quota/reset`);
+        break;
     }
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('操作成功完成！'));
       let token = res.data.data;
       let newTokens = [...tokens];
-      if (action !== 'delete') {
-        record.status = token.status;
+      if (action !== 'delete' && token) {
+        Object.assign(record, token);
       }
       setTokens(newTokens);
     } else {
@@ -306,8 +309,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   // Search tokens function
   const searchTokens = async (page = 1, size = pageSize) => {
     const normalizedPage = Number.isInteger(page) && page > 0 ? page : 1;
-    const normalizedSize =
-      Number.isInteger(size) && size > 0 ? size : pageSize;
+    const normalizedSize = Number.isInteger(size) && size > 0 ? size : pageSize;
 
     const { searchKeyword, searchToken } = getFormValues();
     if (searchKeyword === '' && searchToken === '') {

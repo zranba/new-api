@@ -49,6 +49,15 @@ func addNewRecord(type_ int, id int, value int) {
 	}
 }
 
+func clearPendingTokenQuotaDelta(id int) {
+	if id <= 0 {
+		return
+	}
+	batchUpdateLocks[BatchUpdateTypeTokenQuota].Lock()
+	delete(batchUpdateStores[BatchUpdateTypeTokenQuota], id)
+	batchUpdateLocks[BatchUpdateTypeTokenQuota].Unlock()
+}
+
 func batchUpdate() {
 	// check if there's any data to update
 	hasData := false

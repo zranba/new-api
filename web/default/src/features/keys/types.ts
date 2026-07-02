@@ -22,6 +22,14 @@ import { z } from 'zod'
 // API Key Schema & Types
 // ============================================================================
 
+export const apiKeyQuotaResetPeriodSchema = z
+  .enum(['never', 'daily', 'monthly'])
+  .catch('never')
+
+export type ApiKeyQuotaResetPeriod = z.infer<
+  typeof apiKeyQuotaResetPeriodSchema
+>
+
 export const apiKeySchema = z.object({
   id: z.number(),
   name: z.string(),
@@ -29,6 +37,10 @@ export const apiKeySchema = z.object({
   status: z.number(), // 1: enabled, 2: disabled, 3: expired, 4: exhausted
   remain_quota: z.number(),
   used_quota: z.number(),
+  quota_reset_amount: z.preprocess((v) => v ?? 0, z.number()),
+  quota_reset_period: apiKeyQuotaResetPeriodSchema,
+  last_quota_reset_time: z.preprocess((v) => v ?? 0, z.number()),
+  next_quota_reset_time: z.preprocess((v) => v ?? 0, z.number()),
   unlimited_quota: z.boolean(),
   expired_time: z.number(), // -1 for never expires
   created_time: z.number(),
@@ -85,6 +97,8 @@ export interface SearchApiKeysParams {
 export interface ApiKeyFormData {
   name: string
   remain_quota: number
+  quota_reset_amount: number
+  quota_reset_period: ApiKeyQuotaResetPeriod
   expired_time: number
   unlimited_quota: boolean
   model_limits_enabled: boolean

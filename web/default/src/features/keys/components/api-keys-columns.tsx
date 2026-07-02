@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
-import { getUserGroups } from '@/lib/api'
-import { formatQuota, formatTimestampToDate } from '@/lib/format'
-import { cn } from '@/lib/utils'
+
+import { BadgeCell, TruncatedCell } from '@/components/data-table'
+import { GroupBadge } from '@/components/group-badge'
+import { StatusBadge } from '@/components/status-badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -29,11 +30,15 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { BadgeCell, TruncatedCell } from '@/components/data-table'
-import { GroupBadge } from '@/components/group-badge'
-import { StatusBadge } from '@/components/status-badge'
-import { API_KEY_STATUSES } from '../constants'
-import { type ApiKey } from '../types'
+import { getUserGroups } from '@/lib/api'
+import { formatQuota, formatTimestampToDate } from '@/lib/format'
+import { cn } from '@/lib/utils'
+
+import {
+  API_KEY_STATUSES,
+  getApiKeyQuotaResetPeriodLabelKey,
+} from '../constants'
+import type { ApiKey } from '../types'
 import {
   ApiKeyCell,
   ModelLimitsCell,
@@ -180,6 +185,21 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
                 <div>
                   {t('Total:')} {formatQuota(total)}
                 </div>
+                <div>
+                  {t('Reset amount:')} {formatQuota(apiKey.quota_reset_amount)}
+                </div>
+                <div>
+                  {t('Reset cycle:')}{' '}
+                  {t(
+                    getApiKeyQuotaResetPeriodLabelKey(apiKey.quota_reset_period)
+                  )}
+                </div>
+                {apiKey.next_quota_reset_time > 0 && (
+                  <div>
+                    {t('Next reset:')}{' '}
+                    {formatTimestampToDate(apiKey.next_quota_reset_time)}
+                  </div>
+                )}
               </div>
             </TooltipContent>
           </Tooltip>

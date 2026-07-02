@@ -92,6 +92,7 @@ const AddEditSubscriptionModal = ({
     quota_reset_custom_seconds: 0,
     enabled: true,
     sort_order: 0,
+    allow_balance_pay: true,
     max_purchase_per_user: 0,
     total_amount: 0,
     upgrade_group: '',
@@ -116,6 +117,7 @@ const AddEditSubscriptionModal = ({
       quota_reset_custom_seconds: Number(p.quota_reset_custom_seconds || 0),
       enabled: p.enabled !== false,
       sort_order: Number(p.sort_order || 0),
+      allow_balance_pay: p.allow_balance_pay !== false,
       max_purchase_per_user: Number(p.max_purchase_per_user || 0),
       total_amount: Number(
         quotaToDisplayAmount(p.total_amount || 0).toFixed(2),
@@ -375,6 +377,14 @@ const AddEditSubscriptionModal = ({
                       <Form.Switch
                         field='enabled'
                         label={t('启用状态')}
+                        size='large'
+                      />
+                    </Col>
+
+                    <Col span={12}>
+                      <Form.Switch
+                        field='allow_balance_pay'
+                        label={t('允许余额兑换')}
                         size='large'
                       />
                     </Col>

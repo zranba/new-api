@@ -4,11 +4,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+)
+
+const (
+	TokenQuotaResetNever   = "never"
+	TokenQuotaResetDaily   = "daily"
+	TokenQuotaResetMonthly = "monthly"
 )
 
 type Token struct {
@@ -26,6 +33,10 @@ type Token struct {
 	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
+	QuotaResetAmount   int            `json:"quota_reset_amount" gorm:"default:0"`
+	QuotaResetPeriod   string         `json:"quota_reset_period" gorm:"type:varchar(16);default:'never'"`
+	LastQuotaResetTime int64          `json:"last_quota_reset_time" gorm:"bigint;default:0"`
+	NextQuotaResetTime int64          `json:"next_quota_reset_time" gorm:"bigint;default:0;index"`
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
@@ -54,6 +65,56 @@ func (token *Token) GetFullKey() string {
 
 func (token *Token) GetMaskedKey() string {
 	return MaskTokenKey(token.Key)
+}
+
+func NormalizeTokenQuotaResetPeriod(period string) string {
+	switch strings.TrimSpace(period) {
+	case TokenQuotaResetDaily, TokenQuotaResetMonthly:
+		return strings.TrimSpace(period)
+	default:
+		return TokenQuotaResetNever
+	}
+}
+
+func CalcNextTokenQuotaResetTime(base time.Time, period string) int64 {
+	period = NormalizeTokenQuotaResetPeriod(period)
+	if period == TokenQuotaResetNever {
+		return 0
+	}
+	base = base.In(time.Local)
+	var next time.Time
+	switch period {
+	case TokenQuotaResetDaily:
+		next = time.Date(base.Year(), base.Month(), base.Day(), 0, 0, 0, 0, base.Location()).
+			AddDate(0, 0, 1)
+	case TokenQuotaResetMonthly:
+		next = time.Date(base.Year(), base.Month(), 1, 0, 0, 0, 0, base.Location()).
+			AddDate(0, 1, 0)
+	default:
+		return 0
+	}
+	return next.Unix()
+}
+
+func tokenIsExpired(token *Token, now int64) bool {
+	if token == nil {
+		return false
+	}
+	return token.Status == common.TokenStatusExpired ||
+		(token.ExpiredTime != -1 && token.ExpiredTime < now)
+}
+
+func tokenResetUpdates(token *Token, now int64) map[string]interface{} {
+	updates := map[string]interface{}{
+		"remain_quota":          token.QuotaResetAmount,
+		"used_quota":            0,
+		"last_quota_reset_time": now,
+		"next_quota_reset_time": CalcNextTokenQuotaResetTime(time.Unix(now, 0), token.QuotaResetPeriod),
+	}
+	if token.Status == common.TokenStatusExhausted && !tokenIsExpired(token, now) {
+		updates["status"] = common.TokenStatusEnabled
+	}
+	return updates
 }
 
 func (token *Token) GetIpLimits() []string {
@@ -198,6 +259,12 @@ func ValidateUserToken(key string) (token *Token, err error) {
 	}
 	token, err = GetTokenByKey(key, false)
 	if err == nil {
+		resetToken, resetErr := MaybeResetTokenQuota(token)
+		if resetErr != nil {
+			common.SysLog("ValidateUserToken: failed to reset token quota: " + resetErr.Error())
+		} else if resetToken != nil {
+			token = resetToken
+		}
 		if token.Status == common.TokenStatusExhausted ||
 			token.Status == common.TokenStatusExpired ||
 			token.Status != common.TokenStatusEnabled {
@@ -302,6 +369,7 @@ func (token *Token) Update() (err error) {
 		}
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
+		"quota_reset_amount", "quota_reset_period", "last_quota_reset_time", "next_quota_reset_time",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
 	return err
 }
@@ -437,6 +505,148 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 		},
 	).Error
 	return err
+}
+
+func ResetTokenQuota(id int, userId int) (*Token, error) {
+	if id <= 0 || userId <= 0 {
+		return nil, errors.New("id 或 userId 为空！")
+	}
+	now := GetDBTimestamp()
+	var resetToken Token
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var token Token
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").
+			Where("id = ? AND user_id = ?", id, userId).
+			First(&token).Error; err != nil {
+			return err
+		}
+		if token.UnlimitedQuota {
+			return errors.New("无限额度令牌无需重置额度")
+		}
+		if token.QuotaResetAmount <= 0 {
+			return errors.New("请先设置令牌重置额度")
+		}
+		clearPendingTokenQuotaDelta(token.Id)
+		if err := tx.Model(&Token{}).Where("id = ?", token.Id).Updates(tokenResetUpdates(&token, now)).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&resetToken, "id = ?", token.Id).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resetToken.Key != "" && common.RedisEnabled {
+		_ = cacheDeleteToken(resetToken.Key)
+	}
+	return &resetToken, nil
+}
+
+func MaybeResetTokenQuota(token *Token) (*Token, error) {
+	if token == nil {
+		return nil, errors.New("token is nil")
+	}
+	if token.UnlimitedQuota || token.QuotaResetAmount <= 0 {
+		return token, nil
+	}
+	if NormalizeTokenQuotaResetPeriod(token.QuotaResetPeriod) == TokenQuotaResetNever {
+		return token, nil
+	}
+	now := GetDBTimestamp()
+	if token.NextQuotaResetTime <= 0 || token.NextQuotaResetTime > now {
+		return token, nil
+	}
+	if tokenIsExpired(token, now) {
+		return token, nil
+	}
+	var resetToken Token
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var locked Token
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").
+			Where("id = ? AND next_quota_reset_time > 0 AND next_quota_reset_time <= ?", token.Id, now).
+			First(&locked).Error; err != nil {
+			return err
+		}
+		if locked.UnlimitedQuota || locked.QuotaResetAmount <= 0 ||
+			NormalizeTokenQuotaResetPeriod(locked.QuotaResetPeriod) == TokenQuotaResetNever ||
+			tokenIsExpired(&locked, now) {
+			resetToken = locked
+			return nil
+		}
+		clearPendingTokenQuotaDelta(locked.Id)
+		if err := tx.Model(&Token{}).Where("id = ?", locked.Id).Updates(tokenResetUpdates(&locked, now)).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&resetToken, "id = ?", locked.Id).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			freshToken, freshErr := GetTokenById(token.Id)
+			if freshErr == nil {
+				return freshToken, nil
+			}
+		}
+		return token, err
+	}
+	if resetToken.Key != "" && common.RedisEnabled {
+		_ = cacheDeleteToken(resetToken.Key)
+	}
+	return &resetToken, nil
+}
+
+func ResetDueTokens(limit int) (int, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	now := GetDBTimestamp()
+	var tokens []Token
+	if err := DB.Where("next_quota_reset_time > 0 AND next_quota_reset_time <= ? AND unlimited_quota = ? AND quota_reset_amount > ?",
+		now, false, 0).
+		Order("next_quota_reset_time asc").
+		Limit(limit).
+		Find(&tokens).Error; err != nil {
+		return 0, err
+	}
+	if len(tokens) == 0 {
+		return 0, nil
+	}
+	resetCount := 0
+	for _, token := range tokens {
+		tokenCopy := token
+		err := DB.Transaction(func(tx *gorm.DB) error {
+			var locked Token
+			if err := tx.Set("gorm:query_option", "FOR UPDATE").
+				Where("id = ? AND next_quota_reset_time > 0 AND next_quota_reset_time <= ?", tokenCopy.Id, now).
+				First(&locked).Error; err != nil {
+				return nil
+			}
+			if tokenIsExpired(&locked, now) {
+				return tx.Model(&Token{}).Where("id = ?", locked.Id).Update("next_quota_reset_time", 0).Error
+			}
+			if locked.UnlimitedQuota || locked.QuotaResetAmount <= 0 ||
+				NormalizeTokenQuotaResetPeriod(locked.QuotaResetPeriod) == TokenQuotaResetNever {
+				return tx.Model(&Token{}).Where("id = ?", locked.Id).Update("next_quota_reset_time", 0).Error
+			}
+			clearPendingTokenQuotaDelta(locked.Id)
+			if err := tx.Model(&Token{}).Where("id = ?", locked.Id).Updates(tokenResetUpdates(&locked, now)).Error; err != nil {
+				return err
+			}
+			resetCount++
+			if locked.Key != "" && common.RedisEnabled {
+				_ = cacheDeleteToken(locked.Key)
+			}
+			return nil
+		})
+		if err != nil {
+			return resetCount, err
+		}
+	}
+	return resetCount, nil
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

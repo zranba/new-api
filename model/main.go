@@ -267,6 +267,7 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	shouldBackfillTokenResetAmount := shouldBackfillTokenQuotaResetAmount()
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -303,6 +304,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := backfillTokenQuotaResetAmount(shouldBackfillTokenResetAmount); err != nil {
+		return err
+	}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -318,6 +322,7 @@ func migrateDB() error {
 func migrateDBFast() error {
 
 	var wg sync.WaitGroup
+	shouldBackfillTokenResetAmount := shouldBackfillTokenQuotaResetAmount()
 
 	migrations := []struct {
 		model interface{}
@@ -384,6 +389,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := backfillTokenQuotaResetAmount(shouldBackfillTokenResetAmount); err != nil {
+		return err
+	}
 	common.SysLog("database migrated")
 	return nil
 }
@@ -393,6 +401,19 @@ func migrateLOGDB() error {
 		return migrateClickHouseLogDB()
 	}
 	return LOG_DB.AutoMigrate(&Log{})
+}
+
+func shouldBackfillTokenQuotaResetAmount() bool {
+	return DB.Migrator().HasTable("tokens") && !DB.Migrator().HasColumn(&Token{}, "quota_reset_amount")
+}
+
+func backfillTokenQuotaResetAmount(shouldBackfill bool) error {
+	if !shouldBackfill || !DB.Migrator().HasColumn(&Token{}, "quota_reset_amount") {
+		return nil
+	}
+	return DB.Model(&Token{}).
+		Where("unlimited_quota = ? AND quota_reset_amount = ?", false, 0).
+		Update("quota_reset_amount", gorm.Expr("remain_quota + used_quota")).Error
 }
 
 func migrateClickHouseLogDB() error {

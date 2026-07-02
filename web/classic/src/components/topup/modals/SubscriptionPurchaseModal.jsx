@@ -53,9 +53,11 @@ const SubscriptionPurchaseModal = ({
   enableStripeTopUp = false,
   enableCreemTopUp = false,
   purchaseLimitInfo = null,
+  userQuota = 0,
   onPayStripe,
   onPayCreem,
   onPayEpay,
+  onPayBalance,
 }) => {
   const plan = selectedPlan?.plan;
   const totalAmount = Number(plan?.total_amount || 0);
@@ -70,6 +72,22 @@ const SubscriptionPurchaseModal = ({
   const hasCreem = enableCreemTopUp && !!plan?.creem_product_id;
   const hasEpay = enableOnlineTopUp && epayMethods.length > 0;
   const hasAnyPayment = hasStripe || hasCreem || hasEpay;
+  const quotaPerUnit = React.useMemo(() => {
+    try {
+      const rawQuotaPerUnit = Number.parseFloat(
+        localStorage.getItem('quota_per_unit') || '',
+      );
+      return Number.isFinite(rawQuotaPerUnit) && rawQuotaPerUnit > 0
+        ? rawQuotaPerUnit
+        : 500000;
+    } catch {
+      return 500000;
+    }
+  }, [visible]);
+  const balanceCost = Math.max(0, Math.ceil(price * quotaPerUnit));
+  const normalizedUserQuota = Math.max(0, Number(userQuota || 0));
+  const allowBalancePay = plan?.allow_balance_pay !== false;
+  const insufficientBalance = normalizedUserQuota < balanceCost;
   const purchaseLimit = Number(purchaseLimitInfo?.limit || 0);
   const purchaseCount = Number(purchaseLimitInfo?.count || 0);
   const purchaseLimitReached =
@@ -179,7 +197,48 @@ const SubscriptionPurchaseModal = ({
             />
           )}
 
-          {hasAnyPayment ? (
+          <div className='space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700'>
+            <div className='flex justify-between items-center text-xs'>
+              <Text type='tertiary'>{t('所需额度')}</Text>
+              <Text>{renderQuota(balanceCost)}</Text>
+            </div>
+            <div className='flex justify-between items-center text-xs'>
+              <Text type='tertiary'>{t('可用余额')}</Text>
+              <Text>{renderQuota(normalizedUserQuota)}</Text>
+            </div>
+            {!allowBalancePay ? (
+              <Banner
+                type='danger'
+                description={t('该套餐不允许使用余额兑换')}
+                className='!rounded-xl'
+                closeIcon={null}
+              />
+            ) : insufficientBalance ? (
+              <Banner
+                type='danger'
+                description={t('余额不足')}
+                className='!rounded-xl'
+                closeIcon={null}
+              />
+            ) : null}
+            <Button
+              block
+              theme='light'
+              type='primary'
+              onClick={onPayBalance}
+              loading={paying}
+              disabled={
+                paying ||
+                purchaseLimitReached ||
+                !allowBalancePay ||
+                insufficientBalance
+              }
+            >
+              {t('使用余额支付')}
+            </Button>
+          </div>
+
+          {hasAnyPayment && (
             <div className='space-y-3'>
               <Text size='small' type='tertiary'>
                 {t('选择支付方式')}：
@@ -242,13 +301,6 @@ const SubscriptionPurchaseModal = ({
                 </div>
               )}
             </div>
-          ) : (
-            <Banner
-              type='info'
-              description={t('管理员未开启在线支付功能，请联系管理员配置。')}
-              className='!rounded-xl'
-              closeIcon={null}
-            />
           )}
         </div>
       ) : null}

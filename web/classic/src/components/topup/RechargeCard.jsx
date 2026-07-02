@@ -97,6 +97,7 @@ const RechargeCard = ({
   activeSubscriptions = [],
   allSubscriptions = [],
   reloadSubscriptionSelf,
+  reloadUserQuota,
   enableRedemption = true,
 }) => {
   const onlineFormApiRef = useRef(null);
@@ -690,6 +691,8 @@ const RechargeCard = ({
                 activeSubscriptions={activeSubscriptions}
                 allSubscriptions={allSubscriptions}
                 reloadSubscriptionSelf={reloadSubscriptionSelf}
+                userQuota={userState?.user?.quota || 0}
+                reloadUserQuota={reloadUserQuota}
                 withCard={false}
               />
             </div>

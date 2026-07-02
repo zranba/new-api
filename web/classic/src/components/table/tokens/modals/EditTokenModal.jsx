@@ -45,7 +45,7 @@ import {
   Form,
   Col,
   Row,
-  InputNumber,
+  Select,
 } from '@douyinfe/semi-ui';
 import {
   IconCreditCard,
@@ -58,6 +58,12 @@ import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../../../context/Status';
 
 const { Text, Title } = Typography;
+
+const quotaResetPeriodOptions = [
+  { value: 'never', label: '不重置' },
+  { value: 'daily', label: '每天' },
+  { value: 'monthly', label: '每月' },
+];
 
 const EditTokenModal = (props) => {
   const { t } = useTranslation();
@@ -74,6 +80,9 @@ const EditTokenModal = (props) => {
     name: '',
     remain_quota: 0,
     remain_amount: 0,
+    quota_reset_amount: 0,
+    quota_reset_amount_display: 0,
+    quota_reset_period: 'never',
     expired_time: -1,
     unlimited_quota: true,
     model_limits_enabled: false,
@@ -172,6 +181,10 @@ const EditTokenModal = (props) => {
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
+      data.quota_reset_amount_display = Number(
+        quotaToDisplayAmount(data.quota_reset_amount || 0).toFixed(6),
+      );
+      data.quota_reset_period = data.quota_reset_period || 'never';
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
       }
@@ -222,8 +235,23 @@ const EditTokenModal = (props) => {
       localInputs.remain_quota = localInputs.unlimited_quota
         ? 0
         : displayAmountToQuota(localInputs.remain_amount);
+      localInputs.quota_reset_amount = localInputs.unlimited_quota
+        ? 0
+        : displayAmountToQuota(localInputs.quota_reset_amount_display || 0);
+      localInputs.quota_reset_period = localInputs.unlimited_quota
+        ? 'never'
+        : localInputs.quota_reset_period || 'never';
       if (!localInputs.unlimited_quota && localInputs.remain_quota <= 0) {
         showError(t('请输入金额'));
+        setLoading(false);
+        return;
+      }
+      if (
+        !localInputs.unlimited_quota &&
+        localInputs.quota_reset_period !== 'never' &&
+        localInputs.quota_reset_amount <= 0
+      ) {
+        showError(t('启用重置周期时，重置额度必须大于 0'));
         setLoading(false);
         return;
       }
@@ -238,6 +266,8 @@ const EditTokenModal = (props) => {
       }
       localInputs.model_limits = localInputs.model_limits.join(',');
       localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
+      delete localInputs.remain_amount;
+      delete localInputs.quota_reset_amount_display;
       let res = await API.put(`/api/token/`, {
         ...localInputs,
         id: parseInt(props.editingToken.id),
@@ -265,8 +295,23 @@ const EditTokenModal = (props) => {
         localInputs.remain_quota = localInputs.unlimited_quota
           ? 0
           : displayAmountToQuota(localInputs.remain_amount);
+        localInputs.quota_reset_amount = localInputs.unlimited_quota
+          ? 0
+          : displayAmountToQuota(localInputs.quota_reset_amount_display || 0);
+        localInputs.quota_reset_period = localInputs.unlimited_quota
+          ? 'never'
+          : localInputs.quota_reset_period || 'never';
         if (!localInputs.unlimited_quota && localInputs.remain_quota <= 0) {
           showError(t('请输入金额'));
+          setLoading(false);
+          break;
+        }
+        if (
+          !localInputs.unlimited_quota &&
+          localInputs.quota_reset_period !== 'never' &&
+          localInputs.quota_reset_amount <= 0
+        ) {
+          showError(t('启用重置周期时，重置额度必须大于 0'));
           setLoading(false);
           break;
         }
@@ -282,6 +327,8 @@ const EditTokenModal = (props) => {
         }
         localInputs.model_limits = localInputs.model_limits.join(',');
         localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
+        delete localInputs.remain_amount;
+        delete localInputs.quota_reset_amount_display;
         let res = await API.post(`/api/token/`, localInputs);
         const { success, message } = res.data;
         if (success) {
@@ -537,6 +584,20 @@ const EditTokenModal = (props) => {
                           'remain_quota',
                           displayAmountToQuota(amount),
                         );
+                        if (
+                          !formApiRef.current?.getValue(
+                            'quota_reset_amount_display',
+                          )
+                        ) {
+                          formApiRef.current?.setValue(
+                            'quota_reset_amount_display',
+                            amount,
+                          );
+                          formApiRef.current?.setValue(
+                            'quota_reset_amount',
+                            displayAmountToQuota(amount),
+                          );
+                        }
                       }}
                       style={{ width: '100%' }}
                       showClear
@@ -552,7 +613,10 @@ const EditTokenModal = (props) => {
                         ? `▾ ${t('收起原生额度输入')}`
                         : `▸ ${t('使用原生额度输入')}`}
                     </div>
-                    <div style={{ display: showQuotaInput ? 'block' : 'none' }} className='mt-2'>
+                    <div
+                      style={{ display: showQuotaInput ? 'block' : 'none' }}
+                      className='mt-2'
+                    >
                       <Form.InputNumber
                         field='remain_quota'
                         label={t('额度')}
@@ -572,11 +636,65 @@ const EditTokenModal = (props) => {
                             'remain_amount',
                             Number(quotaToDisplayAmount(quota).toFixed(6)),
                           );
+                          if (
+                            !formApiRef.current?.getValue(
+                              'quota_reset_amount_display',
+                            )
+                          ) {
+                            formApiRef.current?.setValue(
+                              'quota_reset_amount',
+                              quota,
+                            );
+                            formApiRef.current?.setValue(
+                              'quota_reset_amount_display',
+                              Number(quotaToDisplayAmount(quota).toFixed(6)),
+                            );
+                          }
                         }}
                         style={{ width: '100%' }}
                         showClear
                       />
                     </div>
+                  </Col>
+                  <Col xs={24} sm={24} md={24} lg={12} xl={12}>
+                    <Form.InputNumber
+                      field='quota_reset_amount_display'
+                      label={t('固定重置额度')}
+                      prefix={getCurrencyConfig().symbol}
+                      placeholder={t('输入重置额度')}
+                      precision={6}
+                      disabled={values.unlimited_quota}
+                      min={0}
+                      step={0.000001}
+                      extraText={t('手动或周期重置时恢复到此额度')}
+                      onChange={(val) => {
+                        const amount = val === '' || val == null ? 0 : val;
+                        formApiRef.current?.setValue(
+                          'quota_reset_amount_display',
+                          amount,
+                        );
+                        formApiRef.current?.setValue(
+                          'quota_reset_amount',
+                          displayAmountToQuota(amount),
+                        );
+                      }}
+                      style={{ width: '100%' }}
+                      showClear
+                    />
+                  </Col>
+                  <Col xs={24} sm={24} md={24} lg={12} xl={12}>
+                    <Form.Select
+                      field='quota_reset_period'
+                      label={t('重置周期')}
+                      disabled={values.unlimited_quota}
+                      style={{ width: '100%' }}
+                    >
+                      {quotaResetPeriodOptions.map((option) => (
+                        <Select.Option key={option.value} value={option.value}>
+                          {t(option.label)}
+                        </Select.Option>
+                      ))}
+                    </Form.Select>
                   </Col>
                   <Col span={24}>
                     <Form.Switch

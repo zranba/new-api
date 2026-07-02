@@ -45,6 +45,7 @@ import {
   IconCopy,
   IconEyeOpened,
   IconEyeClosed,
+  IconRefresh,
 } from '@douyinfe/semi-icons';
 
 // progress color helper
@@ -53,6 +54,12 @@ const getProgressColor = (pct) => {
   if (pct <= 10) return 'var(--semi-color-danger)';
   if (pct <= 30) return 'var(--semi-color-warning)';
   return undefined;
+};
+
+const getQuotaResetPeriodLabel = (period, t) => {
+  if (period === 'daily') return t('每天');
+  if (period === 'monthly') return t('每月');
+  return t('不重置');
 };
 
 // Render functions
@@ -306,6 +313,9 @@ const renderQuotaUsage = (text, record, t) => {
         <Paragraph copyable={{ content: renderQuota(used) }}>
           {t('已用额度')}: {renderQuota(used)}
         </Paragraph>
+        <Paragraph>
+          {t('额度重置')}: {t('无限额度无需重置')}
+        </Paragraph>
       </div>
     );
     return (
@@ -328,6 +338,20 @@ const renderQuotaUsage = (text, record, t) => {
       <Paragraph copyable={{ content: renderQuota(total) }}>
         {t('总额度')}: {renderQuota(total)}
       </Paragraph>
+      <Paragraph
+        copyable={{ content: renderQuota(record.quota_reset_amount || 0) }}
+      >
+        {t('重置额度')}: {renderQuota(record.quota_reset_amount || 0)}
+      </Paragraph>
+      <Paragraph>
+        {t('重置周期')}:{' '}
+        {getQuotaResetPeriodLabel(record.quota_reset_period, t)}
+      </Paragraph>
+      {record.next_quota_reset_time > 0 && (
+        <Paragraph>
+          {t('下次重置')}: {timestamp2string(record.next_quota_reset_time)}
+        </Paragraph>
+      )}
     </div>
   );
   return (
@@ -432,6 +456,34 @@ const renderOperations = (
           {t('启用')}
         </Button>
       )}
+
+      <Button
+        type='tertiary'
+        size='small'
+        icon={<IconRefresh />}
+        onClick={() => {
+          if (record.unlimited_quota) {
+            showError(t('无限额度令牌无需重置额度'));
+            return;
+          }
+          if (!record.quota_reset_amount || record.quota_reset_amount <= 0) {
+            showError(t('请先设置重置额度'));
+            return;
+          }
+          Modal.confirm({
+            title: t('确定重置此令牌额度？'),
+            content: t('将剩余额度恢复为固定重置额度，并清零已用额度。'),
+            onOk: () => {
+              (async () => {
+                await manageToken(record.id, 'reset_quota', record);
+                await refresh();
+              })();
+            },
+          });
+        }}
+      >
+        {t('重置额度')}
+      </Button>
 
       <Button
         type='tertiary'

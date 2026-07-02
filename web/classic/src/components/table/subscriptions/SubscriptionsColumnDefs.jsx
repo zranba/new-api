@@ -206,9 +206,15 @@ const renderPaymentConfig = (text, record, t, enableEpay) => {
   const hasStripe = !!record?.plan?.stripe_price_id;
   const hasCreem = !!record?.plan?.creem_product_id;
   const hasEpay = !!enableEpay;
+  const hasBalance = record?.plan?.allow_balance_pay !== false;
 
   return (
     <Space spacing={4}>
+      {hasBalance && (
+        <Tag color='blue' shape='circle'>
+          {t('余额')}
+        </Tag>
+      )}
       {hasStripe && (
         <Tag color='violet' shape='circle'>
           Stripe

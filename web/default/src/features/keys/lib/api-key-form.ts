@@ -18,9 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 import type { TFunction } from 'i18next'
+
 import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
+
 import { DEFAULT_GROUP } from '../constants'
-import { type ApiKeyFormData, type ApiKey } from '../types'
+import {
+  apiKeyQuotaResetPeriodSchema,
+  type ApiKeyFormData,
+  type ApiKey,
+} from '../types'
 
 // ============================================================================
 // Form Schema
@@ -31,6 +37,8 @@ export function getApiKeyFormSchema(t: TFunction) {
     .object({
       name: z.string().min(1, t('Please enter a name')),
       remain_quota_dollars: z.number().optional(),
+      quota_reset_amount_dollars: z.number().optional(),
+      quota_reset_period: apiKeyQuotaResetPeriodSchema,
       expired_time: z.date().optional(),
       unlimited_quota: z.boolean(),
       model_limits: z.array(z.string()),
@@ -54,6 +62,31 @@ export function getApiKeyFormSchema(t: TFunction) {
           message: t('Quota must be zero or greater'),
         })
       }
+
+      if (
+        data.quota_reset_amount_dollars !== undefined &&
+        data.quota_reset_amount_dollars < 0
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['quota_reset_amount_dollars'],
+          message: t('Reset amount must be zero or greater'),
+        })
+      }
+
+      if (
+        data.quota_reset_period !== 'never' &&
+        (!data.quota_reset_amount_dollars ||
+          data.quota_reset_amount_dollars <= 0)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['quota_reset_amount_dollars'],
+          message: t(
+            'Reset amount must be greater than zero when a reset cycle is enabled'
+          ),
+        })
+      }
     })
 }
 
@@ -66,6 +99,8 @@ export type ApiKeyFormValues = z.infer<ReturnType<typeof getApiKeyFormSchema>>
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   name: '',
   remain_quota_dollars: 10,
+  quota_reset_amount_dollars: 10,
+  quota_reset_period: 'never',
   expired_time: undefined,
   unlimited_quota: true,
   model_limits: [],
@@ -95,11 +130,19 @@ export function getApiKeyFormDefaultValues(
 export function transformFormDataToPayload(
   data: ApiKeyFormValues
 ): ApiKeyFormData {
+  const quotaResetAmount = data.unlimited_quota
+    ? 0
+    : parseQuotaFromDollars(data.quota_reset_amount_dollars || 0)
+
   return {
     name: data.name,
     remain_quota: data.unlimited_quota
       ? 0
       : parseQuotaFromDollars(data.remain_quota_dollars || 0),
+    quota_reset_amount: quotaResetAmount,
+    quota_reset_period: data.unlimited_quota
+      ? 'never'
+      : data.quota_reset_period,
     expired_time: data.expired_time
       ? Math.floor(data.expired_time.getTime() / 1000)
       : -1,
@@ -123,6 +166,12 @@ export function transformApiKeyToFormDefaults(
     remain_quota_dollars: apiKey.unlimited_quota
       ? 0
       : quotaUnitsToDollars(apiKey.remain_quota),
+    quota_reset_amount_dollars: apiKey.unlimited_quota
+      ? 0
+      : quotaUnitsToDollars(apiKey.quota_reset_amount || apiKey.remain_quota),
+    quota_reset_period: apiKey.unlimited_quota
+      ? 'never'
+      : apiKey.quota_reset_period,
     expired_time:
       apiKey.expired_time > 0
         ? new Date(apiKey.expired_time * 1000)

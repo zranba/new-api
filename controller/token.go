@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -29,6 +30,122 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
 	}
 	return maskedTokens
+}
+
+type tokenPayloadFields struct {
+	QuotaResetAmount bool
+	QuotaResetPeriod bool
+}
+
+func parseTokenPayload(c *gin.Context) (model.Token, tokenPayloadFields, error) {
+	var token model.Token
+	var fields tokenPayloadFields
+	rawBody, err := c.GetRawData()
+	if err != nil {
+		return token, fields, err
+	}
+	if err := common.Unmarshal(rawBody, &token); err != nil {
+		return token, fields, err
+	}
+	var raw map[string]any
+	if err := common.Unmarshal(rawBody, &raw); err == nil {
+		_, fields.QuotaResetAmount = raw["quota_reset_amount"]
+		_, fields.QuotaResetPeriod = raw["quota_reset_period"]
+	}
+	return token, fields, nil
+}
+
+func maxTokenQuotaValue() int {
+	return int(1000000000 * common.QuotaPerUnit)
+}
+
+func normalizeTokenQuotaResetForCreate(c *gin.Context, token *model.Token, fields tokenPayloadFields) bool {
+	if token.UnlimitedQuota {
+		token.QuotaResetAmount = 0
+		token.QuotaResetPeriod = model.TokenQuotaResetNever
+		token.LastQuotaResetTime = 0
+		token.NextQuotaResetTime = 0
+		return true
+	}
+	if token.RemainQuota < 0 {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
+		return false
+	}
+	maxQuotaValue := maxTokenQuotaValue()
+	if token.RemainQuota > maxQuotaValue {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
+		return false
+	}
+	token.QuotaResetPeriod = model.NormalizeTokenQuotaResetPeriod(token.QuotaResetPeriod)
+	if !fields.QuotaResetAmount {
+		token.QuotaResetAmount = token.RemainQuota
+	}
+	if token.QuotaResetAmount < 0 {
+		common.ApiErrorMsg(c, "令牌重置额度不能为负数")
+		return false
+	}
+	if token.QuotaResetAmount > maxQuotaValue {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
+		return false
+	}
+	if token.QuotaResetPeriod != model.TokenQuotaResetNever && token.QuotaResetAmount <= 0 {
+		common.ApiErrorMsg(c, "启用周期重置时必须设置大于 0 的重置额度")
+		return false
+	}
+	token.LastQuotaResetTime = 0
+	token.NextQuotaResetTime = model.CalcNextTokenQuotaResetTime(time.Now(), token.QuotaResetPeriod)
+	return true
+}
+
+func normalizeTokenQuotaResetForUpdate(c *gin.Context, token *model.Token, cleanToken *model.Token, fields tokenPayloadFields) bool {
+	if token.UnlimitedQuota {
+		cleanToken.QuotaResetAmount = 0
+		cleanToken.QuotaResetPeriod = model.TokenQuotaResetNever
+		cleanToken.LastQuotaResetTime = 0
+		cleanToken.NextQuotaResetTime = 0
+		return true
+	}
+	if token.RemainQuota < 0 {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
+		return false
+	}
+	maxQuotaValue := maxTokenQuotaValue()
+	if token.RemainQuota > maxQuotaValue {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
+		return false
+	}
+	resetAmount := cleanToken.QuotaResetAmount
+	if fields.QuotaResetAmount {
+		resetAmount = token.QuotaResetAmount
+	} else if resetAmount <= 0 {
+		resetAmount = token.RemainQuota
+	}
+	if resetAmount < 0 {
+		common.ApiErrorMsg(c, "令牌重置额度不能为负数")
+		return false
+	}
+	if resetAmount > maxQuotaValue {
+		common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
+		return false
+	}
+	resetPeriod := cleanToken.QuotaResetPeriod
+	if fields.QuotaResetPeriod {
+		resetPeriod = token.QuotaResetPeriod
+	}
+	resetPeriod = model.NormalizeTokenQuotaResetPeriod(resetPeriod)
+	if resetPeriod != model.TokenQuotaResetNever && resetAmount <= 0 {
+		common.ApiErrorMsg(c, "启用周期重置时必须设置大于 0 的重置额度")
+		return false
+	}
+	cleanToken.QuotaResetAmount = resetAmount
+	cleanToken.QuotaResetPeriod = resetPeriod
+	if fields.QuotaResetAmount || fields.QuotaResetPeriod {
+		cleanToken.NextQuotaResetTime = model.CalcNextTokenQuotaResetTime(time.Now(), resetPeriod)
+	}
+	if resetPeriod == model.TokenQuotaResetNever {
+		cleanToken.NextQuotaResetTime = 0
+	}
+	return true
 }
 
 func GetAllTokens(c *gin.Context) {
@@ -151,22 +268,25 @@ func GetTokenUsage(c *gin.Context) {
 		"code":    true,
 		"message": "ok",
 		"data": gin.H{
-			"object":               "token_usage",
-			"name":                 token.Name,
-			"total_granted":        token.RemainQuota + token.UsedQuota,
-			"total_used":           token.UsedQuota,
-			"total_available":      token.RemainQuota,
-			"unlimited_quota":      token.UnlimitedQuota,
-			"model_limits":         token.GetModelLimitsMap(),
-			"model_limits_enabled": token.ModelLimitsEnabled,
-			"expires_at":           expiredAt,
+			"object":                "token_usage",
+			"name":                  token.Name,
+			"total_granted":         token.RemainQuota + token.UsedQuota,
+			"total_used":            token.UsedQuota,
+			"total_available":       token.RemainQuota,
+			"unlimited_quota":       token.UnlimitedQuota,
+			"quota_reset_amount":    token.QuotaResetAmount,
+			"quota_reset_period":    model.NormalizeTokenQuotaResetPeriod(token.QuotaResetPeriod),
+			"last_quota_reset_time": token.LastQuotaResetTime,
+			"next_quota_reset_time": token.NextQuotaResetTime,
+			"model_limits":          token.GetModelLimitsMap(),
+			"model_limits_enabled":  token.ModelLimitsEnabled,
+			"expires_at":            expiredAt,
 		},
 	})
 }
 
 func AddToken(c *gin.Context) {
-	token := model.Token{}
-	err := c.ShouldBindJSON(&token)
+	token, fields, err := parseTokenPayload(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -175,17 +295,8 @@ func AddToken(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
 	}
-	// 非无限额度时，检查额度值是否超出有效范围
-	if !token.UnlimitedQuota {
-		if token.RemainQuota < 0 {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
-			return
-		}
-		maxQuotaValue := int((1000000000 * common.QuotaPerUnit))
-		if token.RemainQuota > maxQuotaValue {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
-			return
-		}
+	if !normalizeTokenQuotaResetForCreate(c, &token, fields) {
+		return
 	}
 	// 检查用户令牌数量是否已达上限
 	maxTokens := operation_setting.GetMaxUserTokens()
@@ -216,6 +327,10 @@ func AddToken(c *gin.Context) {
 		ExpiredTime:        token.ExpiredTime,
 		RemainQuota:        token.RemainQuota,
 		UnlimitedQuota:     token.UnlimitedQuota,
+		QuotaResetAmount:   token.QuotaResetAmount,
+		QuotaResetPeriod:   token.QuotaResetPeriod,
+		LastQuotaResetTime: token.LastQuotaResetTime,
+		NextQuotaResetTime: token.NextQuotaResetTime,
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
@@ -250,8 +365,7 @@ func DeleteToken(c *gin.Context) {
 func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
-	token := model.Token{}
-	err := c.ShouldBindJSON(&token)
+	token, fields, err := parseTokenPayload(c)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -259,17 +373,6 @@ func UpdateToken(c *gin.Context) {
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
-	}
-	if !token.UnlimitedQuota {
-		if token.RemainQuota < 0 {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
-			return
-		}
-		maxQuotaValue := int((1000000000 * common.QuotaPerUnit))
-		if token.RemainQuota > maxQuotaValue {
-			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
-			return
-		}
 	}
 	cleanToken, err := model.GetTokenByIds(token.Id, userId)
 	if err != nil {
@@ -281,7 +384,8 @@ func UpdateToken(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgTokenExpiredCannotEnable)
 			return
 		}
-		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota {
+		if cleanToken.Status == common.TokenStatusExhausted && cleanToken.RemainQuota <= 0 && !cleanToken.UnlimitedQuota &&
+			!token.UnlimitedQuota && token.RemainQuota <= 0 {
 			common.ApiErrorI18n(c, i18n.MsgTokenExhaustedCannotEable)
 			return
 		}
@@ -289,7 +393,13 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
+		if !normalizeTokenQuotaResetForUpdate(c, &token, cleanToken, fields) {
+			return
+		}
 		// If you add more fields, please also update token.Update()
+		if token.Status != 0 {
+			cleanToken.Status = token.Status
+		}
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
 		cleanToken.RemainQuota = token.RemainQuota
@@ -310,6 +420,21 @@ func UpdateToken(c *gin.Context) {
 		"message": "",
 		"data":    buildMaskedTokenResponse(cleanToken),
 	})
+}
+
+func ResetTokenQuota(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	userId := c.GetInt("id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, err := model.ResetTokenQuota(id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildMaskedTokenResponse(token))
 }
 
 type TokenBatch struct {

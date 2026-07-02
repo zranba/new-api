@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type StatusBadgeProps } from '@/components/status-badge'
+import type { TFunction } from 'i18next'
+
+import type { StatusBadgeProps } from '@/components/status-badge'
+
+import type { ApiKeyQuotaResetPeriod } from './types'
 
 // ============================================================================
 // API Key Status Configuration
@@ -67,6 +71,40 @@ export const API_KEY_STATUS_OPTIONS = Object.values(API_KEY_STATUSES).map(
 )
 
 // ============================================================================
+// Quota Reset Periods
+// ============================================================================
+
+export const API_KEY_QUOTA_RESET_PERIOD_LABELS: Record<
+  ApiKeyQuotaResetPeriod,
+  string
+> = {
+  never: 'No Reset',
+  daily: 'Daily',
+  monthly: 'Monthly',
+} as const
+
+export const API_KEY_QUOTA_RESET_PERIODS = (
+  Object.keys(API_KEY_QUOTA_RESET_PERIOD_LABELS) as ApiKeyQuotaResetPeriod[]
+).map((value) => ({
+  value,
+  labelKey: API_KEY_QUOTA_RESET_PERIOD_LABELS[value],
+}))
+
+export function getApiKeyQuotaResetPeriodOptions(t: TFunction) {
+  return API_KEY_QUOTA_RESET_PERIODS.map((period) => ({
+    value: period.value,
+    label: t(period.labelKey),
+  }))
+}
+
+export function getApiKeyQuotaResetPeriodLabelKey(period?: string): string {
+  if (period === 'daily' || period === 'monthly') {
+    return API_KEY_QUOTA_RESET_PERIOD_LABELS[period]
+  }
+  return API_KEY_QUOTA_RESET_PERIOD_LABELS.never
+}
+
+// ============================================================================
 // Default Values
 // ============================================================================
 
@@ -85,6 +123,7 @@ export const ERROR_MESSAGES = {
   DELETE_FAILED: 'Failed to delete API key',
   BATCH_DELETE_FAILED: 'Failed to delete API keys',
   STATUS_UPDATE_FAILED: 'Failed to update API key status',
+  QUOTA_RESET_FAILED: 'Failed to reset API key quota',
 } as const
 
 // ============================================================================
@@ -97,4 +136,5 @@ export const SUCCESS_MESSAGES = {
   API_KEY_DELETED: 'API Key deleted successfully',
   API_KEY_ENABLED: 'API Key enabled successfully',
   API_KEY_DISABLED: 'API Key disabled successfully',
+  API_KEY_QUOTA_RESET: 'API Key quota reset successfully',
 } as const
