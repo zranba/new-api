@@ -33,6 +33,7 @@ import { marked } from 'marked';
 import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../context/Status';
 import Text from '@douyinfe/semi-ui/lib/es/typography/text';
+import { isUpdateVersionNewer } from '../../helpers/versionUpdate';
 
 const LEGAL_USER_AGREEMENT_KEY = 'legal.user_agreement';
 const LEGAL_PRIVACY_POLICY_KEY = 'legal.privacy_policy';
@@ -260,7 +261,7 @@ const OtherSetting = () => {
       // const res = await API.get('/api/status/github-latest-release');
 
       const { tag_name, body } = res;
-      if (tag_name === statusState?.status?.version) {
+      if (!isUpdateVersionNewer(tag_name, statusState?.status?.version)) {
         showSuccess(`已是最新版本：${tag_name}`);
       } else {
         setUpdateData({
