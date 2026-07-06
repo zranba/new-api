@@ -14,58 +14,137 @@ on:
       - '!*-alpha*'
 
 jobs:
-  linux:
-    name: Linux Release
+  frontend-assets:
+    name: Build frontend assets
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+
       - name: Determine Version
+        id: version
         run: |
           VERSION=$(git describe --tags)
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
-      - name: Build Frontend (default)
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('web/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Build frontend assets
         env:
           CI: ""
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           cd web
           bun install --frozen-lockfile
           cd default
-          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$VERSION bun run build
-          cd ../..
-      - name: Build Frontend (classic)
-        env:
-          CI: ""
-        run: |
-          cd web
-          bun install --filter ./classic --frozen-lockfile
-          cd classic
-          VITE_REACT_APP_VERSION=$VERSION bun run build
-          cd ../..
+          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$VERSION" bun run build
+          cd ../classic
+          VITE_REACT_APP_VERSION="$VERSION" bun run build
+
+      - name: Upload default frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-default-dist
+          path: web/default/dist
+          if-no-files-found: error
+
+      - name: Upload classic frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-classic-dist
+          path: web/classic/dist
+          if-no-files-found: error
+
+  linux:
+    name: Linux Release (${{ matrix.arch }})
+    needs: frontend-assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            goarch: amd64
+            output: new-api
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            goarch: arm64
+            output: new-api-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Download default frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: web-default-dist
+          path: web/default/dist
+
+      - name: Download classic frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: web-classic-dist
+          path: web/classic/dist
+
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '>=1.25.1'
-      - name: Build Backend (amd64)
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Build Backend
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.frontend-assets.outputs.version }}
         run: |
-          go mod download
-          go build -ldflags "-s -w -X 'new-api/common.Version=$VERSION' -extldflags '-static'" -o new-api-$VERSION
-      - name: Build Backend (arm64)
-        run: |
-          sudo apt-get update
-          DEBIAN_FRONTEND=noninteractive sudo apt-get install -y gcc-aarch64-linux-gnu
-          CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X 'new-api/common.Version=$VERSION' -extldflags '-static'" -o new-api-arm64-$VERSION
+          go build -ldflags "-s -w -X 'new-api/common.Version=$VERSION' -extldflags '-static'" -o "${{ matrix.output }}-$VERSION"
+
+      - name: Upload Linux binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}-release
+          path: ${{ matrix.output }}-${{ needs.frontend-assets.outputs.version }}
+          if-no-files-found: error
+
+  publish-linux:
+    name: Publish Linux Release
+    needs: [frontend-assets, linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*-release
+          merge-multiple: true
+
       - name: Generate checksums
         run: sha256sum new-api-* > checksums-linux.txt
 
       - name: Release
         uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
             new-api-*
@@ -75,46 +154,39 @@ jobs:
 
   macos:
     name: macOS Release
+    needs: frontend-assets
     runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0
-      - name: Determine Version
-        run: |
-          VERSION=$(git describe --tags)
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+          fetch-depth: 1
+
+      - name: Download default frontend
+        uses: actions/download-artifact@v4
         with:
-          bun-version: latest
-      - name: Build Frontend (default)
-        env:
-          CI: ""
-          NODE_OPTIONS: "--max-old-space-size=4096"
-        run: |
-          cd web
-          bun install --frozen-lockfile
-          cd default
-          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$VERSION bun run build
-          cd ../..
-      - name: Build Frontend (classic)
-        env:
-          CI: ""
-        run: |
-          cd web
-          bun install --filter ./classic --frozen-lockfile
-          cd classic
-          VITE_REACT_APP_VERSION=$VERSION bun run build
-          cd ../..
+          name: web-default-dist
+          path: web/default/dist
+
+      - name: Download classic frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: web-classic-dist
+          path: web/classic/dist
+
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '>=1.25.1'
+          cache: true
+          cache-dependency-path: go.sum
+
       - name: Build Backend
+        env:
+          VERSION: ${{ needs.frontend-assets.outputs.version }}
         run: |
-          go mod download
           go build -ldflags "-X 'new-api/common.Version=$VERSION'" -o new-api-macos-$VERSION
+
       - name: Generate checksums
         run: shasum -a 256 new-api-macos-* > checksums-macos.txt
 
@@ -130,6 +202,7 @@ jobs:
 
   windows:
     name: Windows Release
+    needs: frontend-assets
     runs-on: windows-latest
     defaults:
       run:
@@ -138,40 +211,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          fetch-depth: 0
-      - name: Determine Version
-        run: |
-          VERSION=$(git describe --tags)
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+          fetch-depth: 1
+
+      - name: Download default frontend
+        uses: actions/download-artifact@v4
         with:
-          bun-version: latest
-      - name: Build Frontend (default)
-        env:
-          CI: ""
-        run: |
-          cd web
-          bun install --frozen-lockfile
-          cd default
-          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$VERSION bun run build
-          cd ../..
-      - name: Build Frontend (classic)
-        env:
-          CI: ""
-        run: |
-          cd web
-          bun install --filter ./classic --frozen-lockfile
-          cd classic
-          VITE_REACT_APP_VERSION=$VERSION bun run build
-          cd ../..
+          name: web-default-dist
+          path: web/default/dist
+
+      - name: Download classic frontend
+        uses: actions/download-artifact@v4
+        with:
+          name: web-classic-dist
+          path: web/classic/dist
+
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '>=1.25.1'
+          cache: true
+          cache-dependency-path: go.sum
+
       - name: Build Backend
+        env:
+          VERSION: ${{ needs.frontend-assets.outputs.version }}
         run: |
-          go mod download
           go build -ldflags "-s -w -X 'new-api/common.Version=$VERSION'" -o new-api-$VERSION.exe
+
       - name: Generate checksums
         run: sha256sum new-api-*.exe > checksums-windows.txt
 

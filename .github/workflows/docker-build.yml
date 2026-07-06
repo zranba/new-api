@@ -13,27 +13,13 @@ on:
         type: string
 
 jobs:
-  build_single_arch:
-    name: Build & push (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
+  version:
+    name: Resolve Docker tag
+    runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.version.outputs.tag }}
-
     permissions:
-      packages: write
       contents: read
-      id-token: write
-
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -41,7 +27,7 @@ jobs:
           fetch-depth: ${{ github.event_name == 'workflow_dispatch' && 0 || 1 }}
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Resolve tag & write VERSION
+      - name: Resolve tag
         id: version
         run: |
           if [ -n "${{ github.event.inputs.tag }}" ]; then
@@ -53,8 +39,40 @@ jobs:
           else
             TAG=${GITHUB_REF#refs/tags/}
           fi
-          echo "TAG=${TAG}" >> $GITHUB_ENV
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+  build_single_arch:
+    name: Build & push (${{ matrix.arch }})
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Write VERSION
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
           echo "${TAG}" > VERSION
           echo "Building tag: ${TAG} for ${{ matrix.arch }}"
 
@@ -91,8 +109,8 @@ jobs:
             ghcr.io/${{ steps.ghcr.outputs.repository }}:${{ env.TAG }}-${{ matrix.arch }}
             ghcr.io/${{ steps.ghcr.outputs.repository }}:latest-${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=docker-release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-release-${{ matrix.arch }}
           provenance: mode=max
           sbom: true
 
@@ -112,7 +130,7 @@ jobs:
 
   create_manifests:
     name: Create multi-arch manifests
-    needs: [build_single_arch]
+    needs: [version, build_single_arch]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
@@ -122,7 +140,7 @@ jobs:
 
     steps:
       - name: Set version
-        run: echo "TAG=${{ needs.build_single_arch.outputs.tag }}" >> $GITHUB_ENV
+        run: echo "TAG=${{ needs.version.outputs.tag }}" >> $GITHUB_ENV
 
       - name: Normalize GHCR repository
         run: echo "GHCR_REPOSITORY=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV

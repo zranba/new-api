@@ -10,9 +10,28 @@ on:
         description: "reason"
         required: false
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  version:
+    name: Determine nightly version
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Determine nightly version
+        id: version
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          VERSION="nightly-$(date +'%Y%m%d')-${SHORT_SHA}"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: $VERSION"
+
   build_single_arch:
     name: Build & push (${{ matrix.arch }}) [native]
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -35,14 +54,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Determine nightly version
-        id: version
+      - name: Write VERSION
+        env:
+          VERSION: ${{ needs.version.outputs.value }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          VERSION="nightly-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
           echo "$VERSION" > VERSION
-          echo "value=$VERSION" >> $GITHUB_OUTPUT
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Publishing version: $VERSION for ${{ matrix.arch }}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Publishing version: $VERSION for $ARCH"
 
       - name: Normalize GHCR repository
         id: ghcr
@@ -75,16 +94,16 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ steps.ghcr.outputs.repository }}:nightly-${{ matrix.arch }}
-            ghcr.io/${{ steps.ghcr.outputs.repository }}:${{ steps.version.outputs.value }}-${{ matrix.arch }}
+            ghcr.io/${{ steps.ghcr.outputs.repository }}:${{ needs.version.outputs.value }}-${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=docker-nightly-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-nightly-${{ matrix.arch }}
           provenance: false
           sbom: false
 
   create_manifests:
     name: Create multi-arch manifests (GHCR)
-    needs: [build_single_arch]
+    needs: [version, build_single_arch]
     runs-on: ubuntu-latest
 
     permissions:
@@ -92,20 +111,11 @@ jobs:
       contents: read
 
     steps:
-      - name: Check out (shallow)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
       - name: Normalize GHCR repository
         run: echo "GHCR_REPOSITORY=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
 
-      - name: Determine nightly version
-        id: version
-        run: |
-          VERSION="nightly-$(date +'%Y%m%d')-$(git rev-parse --short HEAD)"
-          echo "value=$VERSION" >> $GITHUB_OUTPUT
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+      - name: Set version
+        run: echo "VERSION=${{ needs.version.outputs.value }}" >> $GITHUB_ENV
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
