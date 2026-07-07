@@ -266,7 +266,7 @@ const OtherSetting = () => {
       } else {
         setUpdateData({
           tag_name: tag_name,
-          content: marked.parse(body),
+          content: marked.parse(body || ''),
         });
         setShowUpdateModal(true);
       }
