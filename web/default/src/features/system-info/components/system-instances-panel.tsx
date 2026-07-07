@@ -47,6 +47,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -54,6 +55,11 @@ import { listSystemInstances } from '../api'
 import type { SystemInstance, SystemInstanceStatus } from '../types'
 
 const INSTANCE_POLL_INTERVAL_MS = 30_000
+const INSTANCE_SKELETON_KEYS = [
+  'system-instance-skeleton-1',
+  'system-instance-skeleton-2',
+  'system-instance-skeleton-3',
+]
 
 const STATUS_CLASS_NAME: Record<SystemInstanceStatus, string> = {
   online:
@@ -411,7 +417,7 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
                   {formatTimestampRelative(
                     instance.last_seen_at,
                     'seconds',
-                    i18n.language
+                    toIntlLocale(i18n.language)
                   )}
                 </TableCell>
               </TableRow>
@@ -442,6 +448,52 @@ export function SystemInstancesPanel() {
   const instances = instancesQuery.data ?? []
   const loading = instancesQuery.isLoading
   const refreshing = instancesQuery.isFetching && !instancesQuery.isLoading
+
+  let content: ReactNode
+  if (loading) {
+    content = (
+      <div className='space-y-2 p-4 sm:p-5'>
+        {INSTANCE_SKELETON_KEYS.map((key) => (
+          <Skeleton key={key} className='h-9 w-full rounded-md' />
+        ))}
+      </div>
+    )
+  } else if (instancesQuery.isError) {
+    content = (
+      <ErrorState
+        title={t('We could not load instances.')}
+        description={
+          instancesQuery.error instanceof Error
+            ? instancesQuery.error.message
+            : undefined
+        }
+        onRetry={() => {
+          void instancesQuery.refetch()
+        }}
+        className='min-h-[220px]'
+      />
+    )
+  } else if (instances.length === 0) {
+    content = (
+      <div className='px-4 py-10 text-center sm:px-5'>
+        <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
+          <ServerCog
+            className='text-muted-foreground size-5'
+            aria-hidden='true'
+          />
+        </div>
+        <p className='text-muted-foreground text-sm'>
+          {t('No instances have reported yet.')}
+        </p>
+      </div>
+    )
+  } else {
+    content = (
+      <div className='p-4 sm:p-5'>
+        <SystemInstancesList instances={instances} />
+      </div>
+    )
+  }
 
   return (
     <section className='bg-card overflow-hidden rounded-lg border shadow-xs'>
@@ -485,44 +537,7 @@ export function SystemInstancesPanel() {
         </div>
       </div>
 
-      <div aria-busy={instancesQuery.isFetching}>
-        {loading ? (
-          <div className='space-y-2 p-4 sm:p-5'>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className='h-9 w-full rounded-md' />
-            ))}
-          </div>
-        ) : instancesQuery.isError ? (
-          <ErrorState
-            title={t('We could not load instances.')}
-            description={
-              instancesQuery.error instanceof Error
-                ? instancesQuery.error.message
-                : undefined
-            }
-            onRetry={() => {
-              void instancesQuery.refetch()
-            }}
-            className='min-h-[220px]'
-          />
-        ) : instances.length === 0 ? (
-          <div className='px-4 py-10 text-center sm:px-5'>
-            <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
-              <ServerCog
-                className='text-muted-foreground size-5'
-                aria-hidden='true'
-              />
-            </div>
-            <p className='text-muted-foreground text-sm'>
-              {t('No instances have reported yet.')}
-            </p>
-          </div>
-        ) : (
-          <div className='p-4 sm:p-5'>
-            <SystemInstancesList instances={instances} />
-          </div>
-        )}
-      </div>
+      <div aria-busy={instancesQuery.isFetching}>{content}</div>
     </section>
   )
 }

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import { CircleAlert, GitBranch, Sparkles, KeyRound } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -104,6 +104,23 @@ function splitQuotaDisplay(value: string): { prefix: string; amount: string } {
 }
 
 function buildDetailSegments(
+  log: UsageLog,
+  other: LogOtherData | null,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  isAdmin: boolean
+): DetailSegment[] {
+  const segments = buildTypeDetailSegments(log, other, t)
+  // Quota saturation is a rare, admin-only anomaly marker; surface it first
+  // and in danger styling so it stands out on the related billing log. The
+  // backend already strips admin_info for non-admins; gate on isAdmin too as
+  // defense in depth so the marker never leaks if that changes.
+  if (isAdmin && other?.admin_info?.quota_saturation) {
+    return [{ text: t('Quota clamped'), danger: true }, ...segments]
+  }
+  return segments
+}
+
+function buildTypeDetailSegments(
   log: UsageLog,
   other: LogOtherData | null,
   t: (key: string, opts?: Record<string, unknown>) => string
@@ -207,9 +224,9 @@ function buildDetailSegments(
     }
   } else {
     const isPerCall = isPerCallBilling(other.model_price)
-    if (isPerCall) {
+    if (isPerCall && other.model_price != null) {
       segments.push({
-        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(other.model_price!, priceOpts)}`,
+        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(other.model_price, priceOpts)}`,
       })
     } else if (other.model_ratio != null) {
       const inputPriceUSD = other.model_ratio * 2.0
@@ -817,9 +834,38 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const log = row.original
         const other = parseLogOther(log.other)
 
-        const segments = buildDetailSegments(log, other, t)
+        const segments = buildDetailSegments(log, other, t, isAdmin)
         const primary = segments[0]
         const hasMore = segments.length > 1
+        let detailContent
+        if (primary) {
+          const primaryClassName = cn(
+            'truncate leading-snug group-hover:underline',
+            primary.muted && 'text-muted-foreground/60',
+            primary.danger && 'text-red-600 dark:text-red-400',
+            !primary.muted && !primary.danger && 'text-foreground'
+          )
+          detailContent = (
+            <span className={primaryClassName}>
+              {primary.text}
+              {hasMore && (
+                <span className='text-muted-foreground/40 ml-0.5'>
+                  +{segments.length - 1}
+                </span>
+              )}
+            </span>
+          )
+        } else if (log.content) {
+          detailContent = (
+            <span className='text-muted-foreground truncate group-hover:underline'>
+              {log.content}
+            </span>
+          )
+        } else {
+          detailContent = (
+            <span className='text-muted-foreground/40'>—</span>
+          )
+        }
 
         return (
           <>
@@ -829,31 +875,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               onClick={() => setDialogOpen(true)}
               title={t('Click to view full details')}
             >
-              {primary ? (
-                <span
-                  className={cn(
-                    'truncate leading-snug group-hover:underline',
-                    primary.muted
-                      ? 'text-muted-foreground/60'
-                      : primary.danger
-                        ? 'text-red-600 dark:text-red-400'
-                        : 'text-foreground'
-                  )}
-                >
-                  {primary.text}
-                  {hasMore && (
-                    <span className='text-muted-foreground/40 ml-0.5'>
-                      +{segments.length - 1}
-                    </span>
-                  )}
-                </span>
-              ) : log.content ? (
-                <span className='text-muted-foreground truncate group-hover:underline'>
-                  {log.content}
-                </span>
-              ) : (
-                <span className='text-muted-foreground/40'>—</span>
-              )}
+              {detailContent}
             </button>
             <DetailsDialog
               log={log}

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Skeleton } from '@/components/ui/skeleton'
@@ -31,6 +31,7 @@ import type {
   QuotaDataItem,
   DashboardFilters,
 } from '@/features/dashboard/types'
+import { toIntlLocale } from '@/i18n/languages'
 import { formatCompactNumber, formatNumber, formatQuota } from '@/lib/format'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -89,7 +90,7 @@ export function LogStatCards(props: LogStatCardsProps) {
     const timeDiff = (timeRange.end_timestamp - timeRange.start_timestamp) / 60
     setTimeRangeMinutes(timeDiff)
 
-    getUserQuotaDates(buildQueryParams(timeRange, filters), isAdmin)
+    void getUserQuotaDates(buildQueryParams(timeRange, filters), isAdmin)
       .then((res) => {
         if (abortController.signal.aborted) return
         const data = res?.data || []
@@ -121,7 +122,7 @@ export function LogStatCards(props: LogStatCardsProps) {
 
   const items = statCardsConfig.map((config) => {
     const rawValue = config.getValue(adaptedStats, timeRangeMinutes)
-    const locale = i18n.resolvedLanguage || i18n.language
+    const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
     const formatted =
       config.key === 'quota'
         ? {
@@ -144,6 +145,40 @@ export function LogStatCards(props: LogStatCardsProps) {
       <div className='divide-border/60 grid min-w-0 grid-cols-2 divide-x sm:grid-cols-3 lg:grid-cols-5'>
         {items.map((it, idx) => {
           const Icon = it.icon
+          let body: ReactNode
+          if (loading) {
+            body = (
+              <div className='mt-2 flex flex-col gap-1.5'>
+                <Skeleton className='h-7 w-20' />
+                <Skeleton className='h-3.5 w-28' />
+              </div>
+            )
+          } else if (error) {
+            body = (
+              <>
+                <div className='text-muted-foreground mt-1.5 font-mono text-lg font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl'>
+                  --
+                </div>
+                <div className='text-muted-foreground/40 mt-1 hidden text-xs md:block'>
+                  {it.desc}
+                </div>
+              </>
+            )
+          } else {
+            body = (
+              <>
+                <div
+                  className='text-foreground mt-1.5 max-w-full truncate font-mono text-lg font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl'
+                  title={it.fullValue}
+                >
+                  {it.value}
+                </div>
+                <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
+                  {it.desc}
+                </div>
+              </>
+            )
+          }
           return (
             <div
               key={it.title}
@@ -161,33 +196,7 @@ export function LogStatCards(props: LogStatCardsProps) {
                 </div>
               </div>
 
-              {loading ? (
-                <div className='mt-2 flex flex-col gap-1.5'>
-                  <Skeleton className='h-7 w-20' />
-                  <Skeleton className='h-3.5 w-28' />
-                </div>
-              ) : error ? (
-                <>
-                  <div className='text-muted-foreground mt-1.5 font-mono text-lg font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl'>
-                    --
-                  </div>
-                  <div className='text-muted-foreground/40 mt-1 hidden text-xs md:block'>
-                    {it.desc}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div
-                    className='text-foreground mt-1.5 max-w-full truncate font-mono text-lg font-bold tracking-tight tabular-nums sm:mt-2 sm:text-2xl'
-                    title={it.fullValue}
-                  >
-                    {it.value}
-                  </div>
-                  <div className='text-muted-foreground/60 mt-1 hidden text-xs md:block'>
-                    {it.desc}
-                  </div>
-                </>
-              )}
+              {body}
             </div>
           )
         })}
