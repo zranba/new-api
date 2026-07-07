@@ -53,21 +53,12 @@ jobs:
           bun install --frozen-lockfile
           cd default
           DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$VERSION" bun run build
-          cd ../classic
-          VITE_REACT_APP_VERSION="$VERSION" bun run build
 
       - name: Upload default frontend
         uses: actions/upload-artifact@v4
         with:
           name: web-default-dist
           path: web/default/dist
-          if-no-files-found: error
-
-      - name: Upload classic frontend
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-classic-dist
-          path: web/classic/dist
           if-no-files-found: error
 
   linux:
@@ -97,12 +88,6 @@ jobs:
         with:
           name: web-default-dist
           path: web/default/dist
-
-      - name: Download classic frontend
-        uses: actions/download-artifact@v4
-        with:
-          name: web-classic-dist
-          path: web/classic/dist
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -168,12 +153,6 @@ jobs:
           name: web-default-dist
           path: web/default/dist
 
-      - name: Download classic frontend
-        uses: actions/download-artifact@v4
-        with:
-          name: web-classic-dist
-          path: web/classic/dist
-
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
@@ -218,12 +197,6 @@ jobs:
         with:
           name: web-default-dist
           path: web/default/dist
-
-      - name: Download classic frontend
-        uses: actions/download-artifact@v4
-        with:
-          name: web-classic-dist
-          path: web/classic/dist
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
