@@ -137,6 +137,7 @@ jobs:
     permissions:
       packages: write
       contents: read
+      id-token: write
 
     steps:
       - name: Set version
@@ -165,6 +166,14 @@ jobs:
             -t ghcr.io/${GHCR_REPOSITORY}:latest \
             ghcr.io/${GHCR_REPOSITORY}:latest-amd64 \
             ghcr.io/${GHCR_REPOSITORY}:latest-arm64
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign manifests with cosign
+        run: |
+          cosign sign --yes ghcr.io/${GHCR_REPOSITORY}:${TAG}
+          cosign sign --yes ghcr.io/${GHCR_REPOSITORY}:latest
 
       - name: Manifest summary
         run: |
