@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -431,6 +432,18 @@ func ResetTokenQuota(c *gin.Context) {
 	}
 	token, err := model.ResetTokenQuota(id, userId)
 	if err != nil {
+		if errors.Is(err, model.ErrTokenQuotaResetUnlimited) {
+			common.ApiErrorI18n(c, i18n.MsgTokenQuotaResetUnlimited)
+			return
+		}
+		if errors.Is(err, model.ErrTokenQuotaResetRequired) {
+			common.ApiErrorI18n(c, i18n.MsgTokenQuotaResetRequired)
+			return
+		}
+		if errors.Is(err, model.ErrTokenQuotaResetExpired) {
+			common.ApiErrorI18n(c, i18n.MsgTokenQuotaResetExpired)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}

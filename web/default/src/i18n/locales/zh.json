@@ -1732,6 +1732,7 @@
     "Expiration Time": "过期时间",
     "expired": "已过期",
     "Expired": "已过期",
+    "Expired API keys cannot reset quota. Update the expiration time first.": "已过期的 API Key 无法重置额度，请先更新过期时间。",
     "Expired at": "过期于",
     "Expired time cannot be earlier than current time": "过期时间不能早于当前时间",
     "Expires": "过期",

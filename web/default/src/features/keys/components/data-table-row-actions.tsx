@@ -62,9 +62,11 @@ import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import { resolveChatUrl, type ChatPreset } from '@/features/chat/lib/chat-links'
 import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
+import { formatQuota } from '@/lib/format'
 
 import { resetApiKeyQuota, updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { getApiKeyQuotaResetBlockReason } from '../lib/quota-reset'
 import { apiKeySchema } from '../types'
 import { useApiKeys } from './api-keys-provider'
 
@@ -202,13 +204,23 @@ export function DataTableRowActions<TData>({
     }
   }
 
-  const handleOpenResetDialog = () => {
-    if (apiKey.unlimited_quota) {
+  const handleOpenResetDialog = (e?: React.MouseEvent<HTMLElement>) => {
+    e?.stopPropagation()
+    const blockReason = getApiKeyQuotaResetBlockReason(apiKey)
+    if (blockReason === 'unlimited') {
       toast.info(t('Unlimited API keys do not need quota reset'))
       return
     }
-    if (apiKey.quota_reset_amount <= 0) {
+    if (blockReason === 'missing-reset-amount') {
       toast.error(t('Set a reset amount before resetting quota'))
+      return
+    }
+    if (blockReason === 'expired') {
+      toast.error(
+        t(
+          'Expired API keys cannot reset quota. Update the expiration time first.'
+        )
+      )
       return
     }
     setResetDialogOpen(true)
@@ -281,6 +293,27 @@ export function DataTableRowActions<TData>({
             <Edit />
           </TooltipTrigger>
           <TooltipContent>{t('Edit')}</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={handleOpenResetDialog}
+                disabled={isResettingQuota}
+                aria-label={t('Reset quota')}
+              />
+            }
+          >
+            {isResettingQuota ? (
+              <Loader2 className='size-4 animate-spin' />
+            ) : (
+              <RefreshCw />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>{t('Reset quota')}</TooltipContent>
         </Tooltip>
 
         <DataTableRowActionMenu
@@ -386,6 +419,28 @@ export function DataTableRowActions<TData>({
                 'This will restore the remaining quota to the configured reset amount and clear used quota.'
               )}
             </AlertDialogDescription>
+            <div className='border-border/70 bg-muted/40 grid gap-2 rounded-md border p-3 text-left text-xs'>
+              <div className='flex items-center justify-between gap-3'>
+                <span className='text-muted-foreground'>{t('Remaining:')}</span>
+                <span className='font-medium tabular-nums'>
+                  {formatQuota(apiKey.remain_quota)}
+                </span>
+              </div>
+              <div className='flex items-center justify-between gap-3'>
+                <span className='text-muted-foreground'>{t('Used:')}</span>
+                <span className='font-medium tabular-nums'>
+                  {formatQuota(apiKey.used_quota)}
+                </span>
+              </div>
+              <div className='flex items-center justify-between gap-3'>
+                <span className='text-muted-foreground'>
+                  {t('Reset amount:')}
+                </span>
+                <span className='font-medium tabular-nums'>
+                  {formatQuota(apiKey.quota_reset_amount)}
+                </span>
+              </div>
+            </div>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isResettingQuota}>

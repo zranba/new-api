@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -177,6 +178,35 @@ func TestResetTokenQuotaKeepsDisabledTokenDisabled(t *testing.T) {
 	assert.Equal(t, common.TokenStatusDisabled, resetToken.Status)
 }
 
+func TestResetTokenQuotaRejectsExpiredTokenWithoutChangingQuota(t *testing.T) {
+	db := setupTokenResetTestDB(t)
+	now := GetDBTimestamp()
+	token := &Token{
+		UserId:           1,
+		Key:              "expired-manual-reset",
+		Status:           common.TokenStatusExpired,
+		Name:             "expired",
+		ExpiredTime:      now - 60,
+		RemainQuota:      20,
+		UsedQuota:        80,
+		UnlimitedQuota:   false,
+		QuotaResetAmount: 500,
+		QuotaResetPeriod: TokenQuotaResetDaily,
+	}
+	require.NoError(t, db.Create(token).Error)
+
+	resetToken, err := ResetTokenQuota(token.Id, token.UserId)
+	require.ErrorIs(t, err, ErrTokenQuotaResetExpired)
+	assert.Nil(t, resetToken)
+
+	var got Token
+	require.NoError(t, db.First(&got, token.Id).Error)
+	assert.Equal(t, 20, got.RemainQuota)
+	assert.Equal(t, 80, got.UsedQuota)
+	assert.Equal(t, common.TokenStatusExpired, got.Status)
+	assert.Zero(t, got.LastQuotaResetTime)
+}
+
 func TestResetDueTokensSkipsExpiredTokenAndStopsSchedule(t *testing.T) {
 	db := setupTokenResetTestDB(t)
 	now := GetDBTimestamp()
@@ -238,6 +268,69 @@ func TestResetDueTokensPreservesAccessedTime(t *testing.T) {
 	assert.Equal(t, common.TokenStatusEnabled, got.Status)
 	assert.Greater(t, got.LastQuotaResetTime, int64(0))
 	assert.Equal(t, accessedTime, got.AccessedTime)
+}
+
+func TestResetDueTokensOnlyIgnoresRecordNotFound(t *testing.T) {
+	lockQueryErr := errors.New("lock wait timeout")
+	testCases := []struct {
+		name      string
+		queryErr  error
+		wantError bool
+	}{
+		{
+			name:     "record no longer due",
+			queryErr: gorm.ErrRecordNotFound,
+		},
+		{
+			name:      "lock query failure",
+			queryErr:  lockQueryErr,
+			wantError: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			db := setupTokenResetTestDB(t)
+			now := GetDBTimestamp()
+			token := &Token{
+				UserId:             1,
+				Key:                "due-lock-error",
+				Status:             common.TokenStatusExhausted,
+				Name:               "due",
+				ExpiredTime:        -1,
+				RemainQuota:        0,
+				UsedQuota:          100,
+				UnlimitedQuota:     false,
+				QuotaResetAmount:   500,
+				QuotaResetPeriod:   TokenQuotaResetDaily,
+				NextQuotaResetTime: now - 60,
+			}
+			require.NoError(t, db.Create(token).Error)
+
+			const callbackName = "test:reset_due_tokens_lock_query_error"
+			require.NoError(t, db.Callback().Query().Before("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+				if _, ok := tx.Statement.Dest.(*Token); ok {
+					tx.AddError(testCase.queryErr)
+				}
+			}))
+
+			resetCount, err := ResetDueTokens(10)
+			require.NoError(t, db.Callback().Query().Remove(callbackName))
+
+			assert.Zero(t, resetCount)
+			if testCase.wantError {
+				require.ErrorIs(t, err, testCase.queryErr)
+			} else {
+				require.NoError(t, err)
+			}
+
+			var got Token
+			require.NoError(t, db.First(&got, token.Id).Error)
+			assert.Zero(t, got.RemainQuota)
+			assert.Equal(t, 100, got.UsedQuota)
+			assert.Equal(t, token.NextQuotaResetTime, got.NextQuotaResetTime)
+		})
+	}
 }
 
 func TestValidateUserTokenLazilyResetsDueExhaustedToken(t *testing.T) {

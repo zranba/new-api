@@ -1732,6 +1732,7 @@
     "Expiration Time": "Время истечения срока действия",
     "expired": "истек",
     "Expired": "Просрочено",
+    "Expired API keys cannot reset quota. Update the expiration time first.": "Для просроченных API-ключей нельзя сбросить квоту. Сначала обновите срок действия.",
     "Expired at": "Истекает",
     "Expired time cannot be earlier than current time": "Время истечения срока действия не может быть раньше текущего времени",
     "Expires": "Истекает",

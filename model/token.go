@@ -18,6 +18,12 @@ const (
 	TokenQuotaResetMonthly = "monthly"
 )
 
+var (
+	ErrTokenQuotaResetUnlimited = errors.New("token has unlimited quota")
+	ErrTokenQuotaResetRequired  = errors.New("token quota reset amount is required")
+	ErrTokenQuotaResetExpired   = errors.New("token has expired")
+)
+
 type Token struct {
 	Id                 int            `json:"id"`
 	UserId             int            `json:"user_id" gorm:"index"`
@@ -515,16 +521,19 @@ func ResetTokenQuota(id int, userId int) (*Token, error) {
 	var resetToken Token
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var token Token
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").
+		if err := lockForUpdate(tx).
 			Where("id = ? AND user_id = ?", id, userId).
 			First(&token).Error; err != nil {
 			return err
 		}
 		if token.UnlimitedQuota {
-			return errors.New("无限额度令牌无需重置额度")
+			return ErrTokenQuotaResetUnlimited
 		}
 		if token.QuotaResetAmount <= 0 {
-			return errors.New("请先设置令牌重置额度")
+			return ErrTokenQuotaResetRequired
+		}
+		if tokenIsExpired(&token, now) {
+			return ErrTokenQuotaResetExpired
 		}
 		clearPendingTokenQuotaDelta(token.Id)
 		if err := tx.Model(&Token{}).Where("id = ?", token.Id).Updates(tokenResetUpdates(&token, now)).Error; err != nil {
@@ -564,7 +573,7 @@ func MaybeResetTokenQuota(token *Token) (*Token, error) {
 	var resetToken Token
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var locked Token
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").
+		if err := lockForUpdate(tx).
 			Where("id = ? AND next_quota_reset_time > 0 AND next_quota_reset_time <= ?", token.Id, now).
 			First(&locked).Error; err != nil {
 			return err
@@ -620,10 +629,13 @@ func ResetDueTokens(limit int) (int, error) {
 		tokenCopy := token
 		err := DB.Transaction(func(tx *gorm.DB) error {
 			var locked Token
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").
+			if err := lockForUpdate(tx).
 				Where("id = ? AND next_quota_reset_time > 0 AND next_quota_reset_time <= ?", tokenCopy.Id, now).
 				First(&locked).Error; err != nil {
-				return nil
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
 			}
 			if tokenIsExpired(&locked, now) {
 				return tx.Model(&Token{}).Where("id = ?", locked.Id).Update("next_quota_reset_time", 0).Error

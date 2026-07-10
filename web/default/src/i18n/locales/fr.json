@@ -1732,6 +1732,7 @@
     "Expiration Time": "Heure d'expiration",
     "expired": "expiré",
     "Expired": "Expiré",
+    "Expired API keys cannot reset quota. Update the expiration time first.": "Les clés API expirées ne peuvent pas réinitialiser le quota. Mettez d'abord à jour l'expiration.",
     "Expired at": "Expiré le",
     "Expired time cannot be earlier than current time": "L'heure d'expiration ne peut pas être antérieure à l'heure actuelle",
     "Expires": "Expire",

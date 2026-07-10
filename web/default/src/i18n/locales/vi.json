@@ -1732,6 +1732,7 @@
     "Expiration Time": "Thời gian hết hạn",
     "expired": "Đã hết hạn",
     "Expired": "Hết hạn",
+    "Expired API keys cannot reset quota. Update the expiration time first.": "Không thể đặt lại hạn mức cho khóa API đã hết hạn. Hãy cập nhật thời hạn trước.",
     "Expired at": "Hết hạn lúc",
     "Expired time cannot be earlier than current time": "Thời gian hết hạn không thể sớm hơn thời gian hiện tại",
     "Expires": "Hết hạn",
