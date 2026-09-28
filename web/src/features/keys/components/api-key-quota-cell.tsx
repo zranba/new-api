@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { API_KEY_STATUS } from '../constants'
+import { formatQuotaResetSchedule } from '../lib/quota-reset'
 import type { ApiKey } from '../types'
 
 type ApiKeyQuotaCellProps = {
@@ -41,7 +42,13 @@ export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
   const quotaUnit = currency.kind === 'tokens' ? t('Tokens') : currency.symbol
   const used = props.apiKey.used_quota
   const remaining = props.apiKey.remain_quota
-  const total = used + remaining
+  const periodic =
+    !props.apiKey.unlimited_quota &&
+    !!props.apiKey.quota_reset_period &&
+    props.apiKey.quota_reset_period !== 'never'
+  const total = periodic
+    ? (props.apiKey.quota_reset_amount ?? 0)
+    : used + remaining
   const hasProgress = !props.apiKey.unlimited_quota && total > 0
   const percentage = hasProgress
     ? Math.min(100, Math.max(0, (remaining / total) * 100))
@@ -55,6 +62,11 @@ export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
     toIntlLocale(i18n.resolvedLanguage || i18n.language),
     { maximumFractionDigits: 1 }
   ).format(percentage)
+  const schedule = formatQuotaResetSchedule(
+    props.apiKey,
+    t,
+    toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  )
   const isInactive =
     props.apiKey.status !== API_KEY_STATUS.ENABLED ||
     remaining <= 0 ||
@@ -78,13 +90,44 @@ export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
   }
   details.push({ label: t('Used amount'), value: formattedUsed })
   if (!props.apiKey.unlimited_quota) {
-    details.push({ label: t('Current total quota'), value: formattedTotal })
+    details.push({
+      label: periodic ? t('Reset amount') : t('Current total quota'),
+      value: formattedTotal,
+    })
   }
   if (hasProgress) {
     details.push({
       label: t('Remaining percentage'),
       value: `${formattedPercentage}%`,
     })
+  }
+  if (periodic) {
+    details.push({ label: t('Reset schedule'), value: schedule })
+    if (props.apiKey.quota_reset_timezone) {
+      details.push({
+        label: t('Server timezone'),
+        value: props.apiKey.quota_reset_timezone,
+      })
+    }
+    if (props.apiKey.quota_reset_next_display) {
+      details.push({
+        label: t('Next reset'),
+        value: props.apiKey.quota_reset_next_display,
+      })
+    }
+  }
+
+  let description = t(
+    'Total = used + remaining. It is not an initial allocation or a periodic budget; changing the remaining quota changes the total and percentage.'
+  )
+  if (props.apiKey.unlimited_quota) {
+    description = t(
+      'This API key has no quota limit. Requests still require available wallet or subscription quota.'
+    )
+  } else if (periodic) {
+    description = t(
+      'Remaining percentage uses the reset amount. Used amount is lifetime usage. Wallet or subscription charges are unchanged.'
+    )
   }
 
   return (
@@ -96,15 +139,7 @@ export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
           : triggerLabel
       }
       details={details}
-      description={
-        props.apiKey.unlimited_quota
-          ? t(
-              'This API key has no quota limit. Requests still require available wallet or subscription quota.'
-            )
-          : t(
-              'Total = used + remaining. It is not an initial allocation or a periodic budget; changing the remaining quota changes the total and percentage.'
-            )
-      }
+      description={description}
       className={
         props.variant === 'card' ? 'space-y-2.5' : 'max-w-45 space-y-1.5'
       }

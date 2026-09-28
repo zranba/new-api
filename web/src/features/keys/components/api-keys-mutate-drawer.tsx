@@ -66,6 +66,7 @@ import { RelatedPolicyLink } from '@/features/system-settings/request-policies/r
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { quotaUnitsToDollars } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
@@ -89,6 +90,7 @@ import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
+import { ApiKeyQuotaResetFields } from './api-key-quota-reset-fields'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
@@ -192,15 +194,19 @@ export function ApiKeysMutateDrawer({
     Number(autoGroupsData?.data?.max_count) > 0
       ? Number(autoGroupsData?.data?.max_count)
       : 5
+  const unchangedRemainQuota = apiKeyData?.data
+    ? quotaUnitsToDollars(apiKeyData.data.remain_quota)
+    : undefined
   const schema = useMemo(
-    () => getApiKeyFormSchema(t, maxAutoGroups),
-    [t, maxAutoGroups]
+    () => getApiKeyFormSchema(t, maxAutoGroups, unchangedRemainQuota),
+    [t, maxAutoGroups, unchangedRemainQuota]
   )
 
   const form = useForm<ApiKeyFormValues>({
     resolver: zodResolver(schema),
     defaultValues: getApiKeyFormDefaultValues(defaultUseAutoGroup),
   })
+  const quotaChanged = form.formState.dirtyFields.remain_quota_dollars
 
   // Load existing data when updating
   useEffect(() => {
@@ -290,6 +296,7 @@ export function ApiKeysMutateDrawer({
         const result = await updateApiKey({
           ...basePayload,
           id: currentRow.id,
+          remain_quota: quotaChanged ? basePayload.remain_quota : undefined,
         })
         if (result.success) {
           toast.success(t(SUCCESS_MESSAGES.API_KEY_UPDATED))
@@ -662,12 +669,28 @@ export function ApiKeysMutateDrawer({
                     <FormControl>
                       <Switch
                         checked={field.value}
-                        onCheckedChange={field.onChange}
+                        onCheckedChange={(checked) => {
+                          field.onChange(checked)
+                          if (checked) {
+                            form.setValue('quota_reset_period', 'never', {
+                              shouldDirty: true,
+                            })
+                          }
+                        }}
                       />
                     </FormControl>
                   </FormItem>
                 )}
               />
+              {!unlimitedQuota && (
+                <ApiKeyQuotaResetFields
+                  serverTimezone={
+                    apiKeyData?.data?.quota_reset_timezone ||
+                    status?.server_timezone
+                  }
+                  nextResetDisplay={apiKeyData?.data?.quota_reset_next_display}
+                />
+              )}
             </SideDrawerSection>
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>

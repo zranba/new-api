@@ -88,6 +88,7 @@ export interface ApiResponse<T = unknown> {
 // ============================================================================
 
 export interface SystemStatus {
+  server_timezone?: string
   success?: boolean
   message?: string
   data?: {

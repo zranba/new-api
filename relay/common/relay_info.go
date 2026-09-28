@@ -83,6 +83,7 @@ type TokenCountMeta struct {
 
 type RelayInfo struct {
 	TokenId           int
+	TokenQuotaEpoch   int64
 	TokenKey          string
 	TokenGroup        string
 	UserId            int
@@ -604,10 +605,11 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 
 		OriginModelName: originModelName,
 
-		TokenId:        common.GetContextKeyInt(c, constant.ContextKeyTokenId),
-		TokenKey:       common.GetContextKeyString(c, constant.ContextKeyTokenKey),
-		TokenUnlimited: common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
-		TokenGroup:     tokenGroup,
+		TokenId:         common.GetContextKeyInt(c, constant.ContextKeyTokenId),
+		TokenQuotaEpoch: c.GetInt64("token_quota_epoch"),
+		TokenKey:        common.GetContextKeyString(c, constant.ContextKeyTokenKey),
+		TokenUnlimited:  common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
+		TokenGroup:      tokenGroup,
 
 		isFirstResponse: true,
 		RelayMode:       relayconstant.Path2RelayMode(c.Request.URL.Path),

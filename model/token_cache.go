@@ -10,7 +10,7 @@ import (
 )
 
 func getTokenCacheKey(key string) string {
-	return fmt.Sprintf("token:%s", common.GenerateHMAC(key))
+	return fmt.Sprintf("token:v2:%s", common.GenerateHMAC(key))
 }
 
 func getTokenCacheFenceKey(key string) string {
@@ -54,7 +54,7 @@ func invalidateTokenCacheForMutation(key string) error {
 // field of a live hash.
 // 返回值：0=被 fence 拦截，1=完成初始化，2=哈希已存在，仅刷新 TTL。
 func cacheInitToken(token Token) (int, error) {
-	if !common.RedisEnabled {
+	if !common.RedisEnabled || token.QuotaEpoch > 0 {
 		return 0, nil
 	}
 	allowIps := ""
@@ -74,7 +74,10 @@ redis.call('HSET', KEYS[1],
   'CreatedTime', ARGV[5], 'AccessedTime', ARGV[6], 'ExpiredTime', ARGV[7],
   'UnlimitedQuota', ARGV[8], 'ModelLimitsEnabled', ARGV[9], 'ModelLimits', ARGV[10],
   'AllowIps', ARGV[11], 'Group', ARGV[12], 'CrossGroupRetry', ARGV[13],
-  'AutoGroups', ARGV[14], 'RemainQuota', ARGV[15], 'UsedQuota', ARGV[16])
+  'AutoGroups', ARGV[14], 'RemainQuota', ARGV[15], 'UsedQuota', ARGV[16],
+  'QuotaEpoch', ARGV[18], 'QuotaResetPeriod', ARGV[19], 'QuotaResetAmount', ARGV[20],
+  'QuotaResetDay', ARGV[21], 'QuotaResetTime', ARGV[22],
+  'QuotaResetLastTime', ARGV[23], 'QuotaResetNextTime', ARGV[24])
 redis.call('EXPIRE', KEYS[1], ARGV[17])
 return 1`
 
@@ -87,6 +90,8 @@ return 1`
 		token.ModelLimits, allowIps, token.Group, strconv.FormatBool(token.CrossGroupRetry),
 		token.AutoGroups, token.RemainQuota, token.UsedQuota,
 		tokenCacheTTLSeconds(),
+		token.QuotaEpoch, token.QuotaResetPeriod, token.QuotaResetAmount,
+		token.QuotaResetDay, token.QuotaResetTime, token.QuotaResetLastTime, token.QuotaResetNextTime,
 	).Int()
 }
 

@@ -79,7 +79,10 @@ export async function createApiKey(
 
 // Update an existing API key
 export async function updateApiKey(
-  data: ApiKeyFormData & { id: number }
+  data: Omit<ApiKeyFormData, 'remain_quota'> & {
+    id: number
+    remain_quota?: number
+  }
 ): Promise<ApiResponse<ApiKey>> {
   const res = await api.put('/api/token/', data)
   return res.data

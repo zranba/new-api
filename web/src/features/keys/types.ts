@@ -30,6 +30,16 @@ export const apiKeySchema = z.object({
   remain_quota: z.number(),
   used_quota: z.number(),
   unlimited_quota: z.boolean(),
+  quota_reset_period: z
+    .enum(['never', 'daily', 'weekly', 'monthly'])
+    .optional(),
+  quota_reset_amount: z.number().optional(),
+  quota_reset_day: z.number().optional(),
+  quota_reset_time: z.string().optional(),
+  quota_reset_last_time: z.number().optional(),
+  quota_reset_next_time: z.number().optional(),
+  quota_reset_next_display: z.string().optional(),
+  quota_reset_timezone: z.string().optional(),
   expired_time: z.number(), // -1 for never expires
   created_time: z.number(),
   accessed_time: z.number(),
@@ -94,6 +104,10 @@ export interface ApiKeyFormData {
   group: string
   auto_groups: string[]
   cross_group_retry: boolean
+  quota_reset_period?: 'never' | 'daily' | 'weekly' | 'monthly'
+  quota_reset_amount?: number
+  quota_reset_day?: number
+  quota_reset_time?: string
 }
 
 export interface TokenAutoGroupsConfig {

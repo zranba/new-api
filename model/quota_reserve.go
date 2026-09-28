@@ -41,6 +41,9 @@ return 1`
 
 const tokenQuotaReserveScript = `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
+  or tonumber(redis.call('HGET', KEYS[1], 'QuotaEpoch') or '-1') ~= 0
+  or (tonumber(redis.call('HGET', KEYS[1], 'QuotaResetNextTime') or '0') > 0
+    and tonumber(redis.call('HGET', KEYS[1], 'QuotaResetNextTime')) <= tonumber(ARGV[3]))
   or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
   or redis.call('HEXISTS', KEYS[1], 'UsedQuota') == 0 then
   return -1
@@ -56,6 +59,9 @@ return 1`
 
 const tokenQuotaDeltaScript = `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
+  or tonumber(redis.call('HGET', KEYS[1], 'QuotaEpoch') or '-1') ~= 0
+  or (tonumber(redis.call('HGET', KEYS[1], 'QuotaResetNextTime') or '0') > 0
+    and tonumber(redis.call('HGET', KEYS[1], 'QuotaResetNextTime')) <= tonumber(ARGV[3]))
   or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
   or redis.call('HEXISTS', KEYS[1], 'UsedQuota') == 0 then
   return -1
@@ -125,20 +131,7 @@ func persistTokenQuotaDelta(id int, delta int) error {
 		addNewRecord(BatchUpdateTypeTokenQuota, id, delta)
 		return nil
 	}
-	result := DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota + ?", delta),
-			"used_quota":    gorm.Expr("used_quota - ?", delta),
-			"accessed_time": common.GetTimestamp(),
-		},
-	)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return applyTokenQuotaDelta(id, delta, 0)
 }
 
 func reserveUserQuotaDB(id int, quota int) (bool, error) {
@@ -148,11 +141,11 @@ func reserveUserQuotaDB(id int, quota int) (bool, error) {
 	return result.RowsAffected == 1, result.Error
 }
 
-func reserveTokenQuotaDB(id int, quota int) (bool, error) {
+func reserveTokenQuotaDB(id int, quota int, epoch int64) (bool, error) {
 	result := DB.Model(&Token{}).
-		Where("id = ? AND remain_quota >= ?", id, quota).
+		Where("id = ? AND ((quota_epoch = ? AND remain_quota >= ?) OR quota_epoch > ?)", id, epoch, quota, epoch).
 		Updates(map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
+			"remain_quota":  gorm.Expr("CASE WHEN quota_epoch = ? THEN remain_quota - ? ELSE remain_quota END", epoch, quota),
 			"used_quota":    gorm.Expr("used_quota + ?", quota),
 			"accessed_time": common.GetTimestamp(),
 		})
@@ -200,18 +193,22 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 
 // TryReserveTokenQuota atomically checks and deducts a token quota. Unlimited
 // tokens skip the balance check but still update remain/used accounting.
-func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, error) {
+func TryReserveTokenQuota(id int, key string, quota int, unlimited bool, epochs ...int64) (bool, error) {
 	if quota < 0 {
 		return false, errors.New("quota 不能为负数！")
 	}
 	if quota == 0 {
 		return true, nil
 	}
-	if unlimited {
-		return true, DecreaseTokenQuota(id, key, quota)
+	epoch := int64(0)
+	if len(epochs) > 0 {
+		epoch = epochs[0]
 	}
-	if !common.RedisEnabled {
-		return reserveTokenQuotaDB(id, quota)
+	if unlimited {
+		return true, DecreaseTokenQuota(id, key, quota, epoch)
+	}
+	if !common.RedisEnabled || epoch > 0 {
+		return reserveTokenQuotaDB(id, quota, epoch)
 	}
 
 	result, err := cacheTryReserveTokenQuota(id, key, int64(quota))
@@ -224,7 +221,7 @@ func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, 
 		if err != nil {
 			common.SysLog("token quota cache reserve unavailable, falling back to database: " + err.Error())
 		}
-		return reserveTokenQuotaDB(id, quota)
+		return reserveTokenQuotaDB(id, quota, epoch)
 	}
 	if result == cacheQuotaInsufficient {
 		return false, nil

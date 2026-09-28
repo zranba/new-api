@@ -38,6 +38,7 @@ auth.insufficient_privilege: "Unauthorized, insufficient privileges"
 
 # Token messages
 token.name_too_long: "Token name is too long"
+token.quota_reset_invalid: "Invalid quota reset settings. Use a finite positive amount, a valid period and day, and a time in HH:mm format."
 token.quota_negative: "Quota value cannot be negative"
 token.quota_exceed_max: "Quota value exceeds valid range, maximum is {{.Max}}"
 token.generate_failed: "Failed to generate token"

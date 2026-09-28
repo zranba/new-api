@@ -22,6 +22,62 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+	service.RegisterSystemTaskHandler(tokenQuotaResetHandler{})
+}
+
+type tokenQuotaResetHandler struct{}
+
+func (tokenQuotaResetHandler) Type() string            { return model.SystemTaskTypeTokenQuotaReset }
+func (tokenQuotaResetHandler) Interval() time.Duration { return time.Minute }
+func (tokenQuotaResetHandler) NewPayload() any         { return nil }
+func (tokenQuotaResetHandler) Enabled() bool {
+	tokens, err := model.DueTokenQuotaResets(0, common.GetTimestamp(), 1)
+	if err != nil {
+		common.SysError("failed to find due token quota resets: " + err.Error())
+	}
+	return err == nil && len(tokens) > 0
+}
+
+func (tokenQuotaResetHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	count, failed, afterID := 0, 0, 0
+	now := common.GetTimestamp()
+	var runErr error
+	for {
+		if err := ctx.Err(); err != nil {
+			runErr = err
+			break
+		}
+		tokens, err := model.DueTokenQuotaResets(afterID, now, 300)
+		if err != nil {
+			runErr = err
+			break
+		}
+		for _, token := range tokens {
+			if err := ctx.Err(); err != nil {
+				runErr = err
+				break
+			}
+			afterID = token.Id
+			_, reset, err := model.ResetTokenQuotaIfDue(token.Id, now)
+			if err != nil {
+				failed++
+				common.SysError(fmt.Sprintf("token quota reset failed (id=%d): %v", token.Id, err))
+			} else if reset {
+				count++
+			}
+		}
+		if runErr != nil || len(tokens) < 300 {
+			break
+		}
+	}
+	status := model.SystemTaskStatusSucceeded
+	if failed > 0 && runErr == nil {
+		runErr = fmt.Errorf("%d token quota resets failed", failed)
+	}
+	if runErr != nil {
+		status = model.SystemTaskStatusFailed
+	}
+	finishSystemTaskHandler(task, runnerID, status, map[string]int{"reset_count": count, "failed_count": failed}, runErr)
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and

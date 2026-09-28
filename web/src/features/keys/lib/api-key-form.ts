@@ -28,7 +28,11 @@ import type { ApiKey, ApiKeyFormData } from '../types'
 // Form Schema
 // ============================================================================
 
-export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
+export function getApiKeyFormSchema(
+  t: TFunction,
+  maxAutoGroups = 5,
+  unchangedRemainQuota?: number
+) {
   const autoGroupLimit =
     Number.isInteger(maxAutoGroups) && maxAutoGroups > 0 ? maxAutoGroups : 5
 
@@ -38,6 +42,12 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().optional(),
       unlimited_quota: z.boolean(),
+      quota_reset_period: z
+        .enum(['never', 'daily', 'weekly', 'monthly'])
+        .optional(),
+      quota_reset_amount_dollars: z.number().optional(),
+      quota_reset_day: z.number().optional(),
+      quota_reset_time: z.string().optional(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
       group: z.string().optional(),
@@ -47,6 +57,44 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
+      if (data.quota_reset_period && data.quota_reset_period !== 'never') {
+        const resetQuota = parseQuotaFromDollars(
+          data.quota_reset_amount_dollars ?? 0
+        )
+        if (
+          data.unlimited_quota ||
+          resetQuota <= 0 ||
+          !Number.isSafeInteger(resetQuota)
+        ) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['quota_reset_amount_dollars'],
+            message: t(
+              'Enter a valid positive reset amount with unlimited quota disabled'
+            ),
+          })
+        }
+        const day = data.quota_reset_day ?? 0
+        if (
+          (data.quota_reset_period === 'weekly' &&
+            (!Number.isInteger(day) || day < 1 || day > 7)) ||
+          (data.quota_reset_period === 'monthly' &&
+            (!Number.isInteger(day) || day < 1 || day > 31))
+        ) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['quota_reset_day'],
+            message: t('Choose a valid reset day'),
+          })
+        }
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(data.quota_reset_time ?? '')) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['quota_reset_time'],
+            message: t('Enter a valid time in HH:mm format'),
+          })
+        }
+      }
       if (data.group === 'auto') {
         if (
           data.auto_groups_mode === 'custom' &&
@@ -86,7 +134,8 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
 
       if (
         data.remain_quota_dollars === undefined ||
-        data.remain_quota_dollars < 0
+        (data.remain_quota_dollars < 0 &&
+          data.remain_quota_dollars !== unchangedRemainQuota)
       ) {
         ctx.addIssue({
           code: 'custom',
@@ -108,6 +157,10 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   remain_quota_dollars: 10,
   expired_time: undefined,
   unlimited_quota: true,
+  quota_reset_period: 'never',
+  quota_reset_amount_dollars: 10,
+  quota_reset_day: 1,
+  quota_reset_time: '00:00',
   model_limits: [],
   allow_ips: '',
   group: DEFAULT_GROUP,
@@ -148,6 +201,15 @@ export function transformFormDataToPayload(
       ? Math.floor(data.expired_time.getTime() / 1000)
       : -1,
     unlimited_quota: data.unlimited_quota,
+    quota_reset_period: data.unlimited_quota
+      ? 'never'
+      : (data.quota_reset_period ?? 'never'),
+    quota_reset_amount: parseQuotaFromDollars(
+      data.quota_reset_amount_dollars ?? 0
+    ),
+    quota_reset_day:
+      data.quota_reset_period === 'daily' ? 0 : (data.quota_reset_day ?? 1),
+    quota_reset_time: data.quota_reset_time ?? '00:00',
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
@@ -185,6 +247,12 @@ export function transformApiKeyToFormDefaults(
         ? new Date(apiKey.expired_time * 1000)
         : undefined,
     unlimited_quota: apiKey.unlimited_quota,
+    quota_reset_period: apiKey.quota_reset_period ?? 'never',
+    quota_reset_amount_dollars: apiKey.quota_reset_amount
+      ? quotaUnitsToDollars(apiKey.quota_reset_amount)
+      : quotaUnitsToDollars(Math.max(0, apiKey.remain_quota)),
+    quota_reset_day: apiKey.quota_reset_day || 1,
+    quota_reset_time: apiKey.quota_reset_time || '00:00',
     model_limits: apiKey.model_limits
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],

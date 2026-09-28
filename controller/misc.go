@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -53,6 +54,7 @@ func GetStatus(c *gin.Context) {
 	data := gin.H{
 		"version":                     common.Version,
 		"start_time":                  common.StartTime,
+		"server_timezone":             time.Now().Format("MST (UTC-07:00)"),
 		"email_verification":          common.EmailVerificationEnabled,
 		"github_oauth":                common.GitHubOAuthEnabled,
 		"github_client_id":            common.GitHubClientId,

@@ -46,17 +46,28 @@ This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI pro
 - A separate function is appropriate when it represents reusable behavior, a required interface/framework callback, an exported API, a test fixture, or complex business logic that deserves direct tests.
 - If a single-use helper is kept, its name must describe a durable domain concept rather than a mechanical step extracted only to shorten the caller.
 
+### Test Maintenance and Execution
+
+These rules apply project-wide. Other testing guidance in this file and feature-specific instructions applies only within these limits.
+
+- Avoid adding, modifying, or refactoring tests by default. Only merge or import tests already present in the upstream repository, or make the smallest changes necessary to fix actual failures in existing or imported upstream tests. Do not author new local tests for features, bug fixes, or coverage targets.
+- Diagnose test failures before making changes. Fix production code when it violates the intended behavior; modify tests only when a necessary adaptation or test defect causes the failure. Do not weaken assertions, delete cases, or mark failing tests as skipped to make the suite pass.
+- Preserve upstream test organization, frameworks, and style. Do not rewrite tests merely to meet local preferences for directories, naming, assertion libraries, or file counts.
+- Do not run tests that require any database instance, including in-memory SQLite, MySQL, PostgreSQL, or ClickHouse. This includes primary and log database tests, fresh-database and upgrade migration tests, repeated-startup checks, and database compatibility matrices. Do not provision, start, or connect to databases for test verification.
+- Inspect test commands and shared setup before execution. Select only relevant existing non-database tests; exclude database tests through execution scope, not source changes. If database setup cannot be avoided without editing tests, do not run that command and report the unverified scope.
+- Keep applicable build, type-check, and lint requirements. Report the commands actually run and their observed results; do not describe excluded or unrun tests as passed.
+
 ### Authentication Security (OWASP Mandatory)
 
 - Any implementation, modification, or review involving authentication-related flows MUST comply with the applicable requirements of the latest stable [OWASP Application Security Verification Standard (ASVS)](https://owasp.org/www-project-application-security-verification-standard/) and the relevant [OWASP Cheat Sheet Series](https://cheatsheetseries.owasp.org/). This applies to both backend and frontend changes, including registration, login/logout, password changes and recovery, email verification, MFA, WebAuthn/Passkeys, OAuth/OIDC, account linking/unlinking, sessions, JWTs, API credentials, and re-authentication for sensitive actions.
 - Before changing these flows, read the applicable OWASP guidance, starting with the [Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html) and [Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html). Consult the password storage, forgot password, MFA, OAuth, and CSRF guidance when those mechanisms are involved. Identify the applicable controls before implementation; existing code is not a justification for retaining or introducing an insecure pattern.
 - Enforce security controls on the server. Apply the relevant requirements for credential storage and transport, resistance to account enumeration and brute force, CSRF and replay protection, token/challenge expiry and single use where required, protocol-specific verification, session rotation and invalidation, and re-authentication for sensitive account changes. Frontend checks MUST NOT substitute for server-side enforcement, and recovery or alternative login paths MUST NOT bypass the required authentication assurance.
 - Authentication audit events MUST exclude passwords, verification codes, recovery codes, private keys, and usable session or authentication tokens. Record enough non-secret context to investigate authentication failures and sensitive account changes.
-- Verify affected security controls with focused regression tests, including applicable failure, expiry, replay, and bypass cases, following the existing backend/frontend test conventions. Record the OWASP references (including the ASVS version and requirement IDs when used), validation performed, and any unresolved gaps in the change summary or PR description. Do not claim compliance or completion while an applicable security requirement remains unmet or unverified.
+- Verify affected security controls with available existing or imported upstream non-database regression tests, subject to Test Maintenance and Execution. Record the OWASP references (including the ASVS version and requirement IDs when used), validation performed, and any unresolved gaps, including uncovered failure, expiry, replay, or bypass cases, in the change summary or PR description. Do not claim OWASP compliance or that a security control was verified while applicable requirements remain unmet or unverified.
 
 ### Backend Rules
 
-**Modern Go conventions:** Apply these conventions to new or modified Go code, including tests and `relaykit/`, when they preserve behavior and improve readability. Use the Go version declared in the relevant module's `go.mod` as the compatibility baseline.
+**Modern Go conventions:** Apply these conventions to new or modified Go code, including `relaykit/`, when they preserve behavior and improve readability. Test changes remain subject to Test Maintenance and Execution; do not restyle tests solely to apply these conventions. Use the Go version declared in the relevant module's `go.mod` as the compatibility baseline.
 
 - Use `any` instead of `interface{}`, including map values, slice elements, parameters, and return types.
 - For fixed-count loops, prefer `for i := range n`, or `for range n` when the index is unused. For slice indices, prefer `for i := range items`. Keep conventional loops when the bound changes during iteration or the loop needs a different start or step.
@@ -91,11 +102,10 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 
 **Database compatibility:** All database code MUST work with SQLite, MySQL >= 5.7.8, and PostgreSQL >= 9.6 simultaneously.
 
-- Any change that can affect database behavior MUST be verified before the work is considered complete. This includes ORM/database-driver dependency changes, connection/DSN/protocol or prepared-statement configuration, models and GORM tags, migrations and `AutoMigrate`, constraints and indexes, `Scanner`/`Valuer`/serializer behavior, raw SQL, transactions, and row locking.
-- Required database verification MUST exercise real SQLite, MySQL, and PostgreSQL instances. Unit tests, mocks, a successful build, code inspection, or testing only one dialect are not substitutes. Use at least one supported version of each engine; changes that depend on version-specific behavior must also cover the minimum supported version.
-- Treat GORM core and its database dialect/driver packages as a compatible version set. Any change to one of them requires checking upstream compatibility and running the complete three-database verification matrix; do not upgrade only the core package and infer that existing drivers remain compatible.
-- Schema or migration changes MUST be tested both on a fresh database and by upgrading a representative database created by the latest released version. Run startup/migration at least twice to prove idempotency, and verify that existing data, indexes, constraints, and uniqueness guarantees are preserved. Cover the separately configured log database when the affected path is shared with or used by it.
-- Record the exact database versions, commands, and results in the final handoff or pull request. If any required database verification cannot be run, report the blocker explicitly and do not claim the change is database-compatible or complete.
+- Review database-affecting changes for compatibility with all supported engines and their minimum supported versions without running database tests. This includes ORM/database-driver dependencies, connection/DSN/protocol and prepared-statement configuration, models and GORM tags, migrations and `AutoMigrate`, constraints and indexes, `Scanner`/`Valuer`/serializer behavior, raw SQL, transactions, and row locking.
+- Treat GORM core and its database dialect/driver packages as a compatible version set. Any change to one of them requires checking upstream compatibility; do not upgrade only the core package and infer that existing drivers remain compatible.
+- Review schema and migration code for fresh-database and upgrade behavior, idempotent startup, and preservation of existing data, indexes, constraints, and uniqueness guarantees. Include the separately configured log database when the affected path is shared with or used by it; do not execute database tests or startup/migration runs for verification.
+- For database-affecting changes, state in the final handoff or pull request that database tests were not run under project policy, and distinguish code review findings from runtime verification. Do not claim database tests passed or runtime compatibility was verified.
 - Prefer GORM methods (`Create`, `Find`, `Where`, `Updates`, etc.) over raw SQL.
 - Let GORM handle primary key generation; do not use `AUTO_INCREMENT` or `SERIAL` directly.
 - Standard `SELECT ... FOR UPDATE` row locks built with GORM query methods in `model/` MUST use `lockForUpdate(tx)`. Do not use the legacy GORM v1 pattern `tx.Set("gorm:query_option", "FOR UPDATE")`, because GORM v2 silently ignores it and no lock is acquired. Do not duplicate `clause.Locking{Strength: "UPDATE"}` at call sites; the shared helper emits `FOR UPDATE` for MySQL/PostgreSQL and skips it for SQLite, where the syntax is unsupported. Dialect-specific locking with different semantics (for example, a MySQL next-key/gap lock) may use raw SQL only behind explicit database-type branches with valid fallbacks for every supported database.
@@ -106,7 +116,7 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
   - Use `common.UsingMainDatabase(...)` for primary database branches and `common.UsingLogDatabase(...)` for log database branches.
 - Do not use database-specific features without cross-DB fallback, including MySQL-only functions, PostgreSQL-only operators, SQLite-unsupported `ALTER COLUMN`, or database-specific JSON column types without a `TEXT` fallback.
 - Migrations must work on all three databases. For SQLite, use `ALTER TABLE ... ADD COLUMN` instead of `ALTER COLUMN` (see `model/main.go` for patterns).
-- Avoid GORM boolean default tags such as `gorm:"default:true"` when the default is a business rule already enforced by code. MySQL and PostgreSQL can normalize boolean defaults differently, causing GORM `AutoMigrate` to repeatedly issue `ALTER TABLE` on restart. Prefer setting these defaults in request/model normalization, hooks, constructors, or service logic; do not replace `default:true` with `default:1` unless the behavior is verified across SQLite, MySQL, and PostgreSQL.
+- Avoid GORM boolean default tags such as `gorm:"default:true"` when the default is a business rule already enforced by code. MySQL and PostgreSQL can normalize boolean defaults differently, causing GORM `AutoMigrate` to repeatedly issue `ALTER TABLE` on restart. Prefer setting these defaults in request/model normalization, hooks, constructors, or service logic; do not treat replacing `default:true` with `default:1` as a portability fix.
 
 **Relay and provider behavior:**
 
@@ -132,19 +142,19 @@ Inside `relaykit/`, use `kitutil.*` from `relaykit/relayconvert/kitutil/json.go`
 
 Tasks that touch none of these (for example unrelated frontend work, authentication, database migrations, or protocol conversion that leaves usage untouched) do not need to read it.
 
-**Backend test quality:** Backend tests must protect real behavior, API contracts, billing/accounting invariants, data compatibility, or regression paths.
+**Backend test quality:** Within the changes allowed by Test Maintenance and Execution, preserve tests that protect real behavior, API contracts, billing/accounting invariants, data compatibility, or regression paths. These quality rules do not authorize additional test changes.
 
-- **Do not scatter tests for a small change:** For a focused feature or fix, extend an existing suitable test file first. If a new test file is necessary, add at most one and consolidate the key regression cases there. MUST NOT create separate test files for the same small feature across `controller/`, `service/`, `setting/`, or other layers merely because its call chain crosses those layers. Do not repeat fixtures and assertions at each layer. Keep the cases compact and focused on observable behavior; the number of production files touched is not a reason to add more test files.
+- Keep necessary test fixes localized to the failing cases and their required fixtures. Do not scatter duplicate fixtures or assertions across layers, or reorganize imported upstream tests to meet a local file-count limit.
 - Do not add tests that only improve coverage numbers, prove that code happens to run, or lock in implementation details without a user-visible or cross-module contract.
 - Avoid fake fuzz/stress/smoke/performance tests built from random inputs, large loop counts, sleeps, timing comparisons, or log-only assertions.
 - Avoid duplicate tests that exercise the same branch with different names but no new invariant.
 - Avoid tests that force incorrect provider/protocol semantics into production code.
 - Avoid tests that assert private constants, select-field lists, helper internals, or file layout when observable behavior is already covered elsewhere.
 - Prefer deterministic table tests with explicit inputs and exact expected outputs.
-- When tests need database, request context, user group, settings, or cache state, initialize that state explicitly inside the test fixture.
-- New or substantially rewritten Go backend tests MUST use `github.com/stretchr/testify/require` for setup and fatal assertions, and `github.com/stretchr/testify/assert` for non-fatal value checks.
+- When fixing fixture failures in non-database tests, initialize the required request context, user group, settings, or cache state explicitly inside the fixture.
+- Follow the existing test's assertion framework for necessary changes. In tests already using Testify, use `github.com/stretchr/testify/require` for setup and fatal assertions, and `github.com/stretchr/testify/assert` for non-fatal value checks. Do not migrate assertion frameworks when importing upstream tests or fixing failures.
 - Avoid hand-written assertion helpers unless they encode a reusable project-specific invariant.
-- When cleaning tests, preserve meaningful regression coverage. If a deleted test covered a real contract indirectly, replace it with a smaller test that asserts that contract directly.
+- Do not proactively clean up or replace tests. Preserve existing behavior contracts when integrating upstream tests or making necessary failure fixes.
 
 **Documentation files:**
 
@@ -163,7 +173,7 @@ Tasks that touch none of these (for example unrelated frontend work, authenticat
   - `bun run i18n:*` for i18n tooling
 - Frontend UI text must support i18n with `i18next`/`react-i18next`. Use flat JSON locale files in `web/src/i18n/locales/{lang}.json`, with English source strings as keys.
 - In React components, use `useTranslation()` and call `t('English key')` for user-facing text.
-- **Number formatting and Intl locales (mandatory):** Reuse `@/lib/format` for ordinary number/compact-number display and `@/lib/currency` for monetary values; preserve each formatter's precision and unit semantics. Interface language codes such as `zhCN` / `zhTW` are NOT valid Intl locales. Any interface language passed to `Intl.*`, `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString`, or a locale-aware formatting helper MUST first pass through `toIntlLocale` from `@/i18n/languages`. Do not duplicate language mappings or pass raw language codes through aliases. Follow `web/AGENTS.md` for the lint rule and regression requirements.
+- **Number formatting and Intl locales (mandatory):** Reuse `@/lib/format` for ordinary number/compact-number display and `@/lib/currency` for monetary values; preserve each formatter's precision and unit semantics. Interface language codes such as `zhCN` / `zhTW` are NOT valid Intl locales. Any interface language passed to `Intl.*`, `toLocaleString` / `toLocaleDateString` / `toLocaleTimeString`, or a locale-aware formatting helper MUST first pass through `toIntlLocale` from `@/i18n/languages`. Do not duplicate language mappings or pass raw language codes through aliases. Follow `web/AGENTS.md` for the lint rule and verification guidance, subject to Test Maintenance and Execution.
 - Follow `web/AGENTS.md` for detailed frontend conventions, including TypeScript, component structure, styling, accessibility, testing, and build checks.
 
 ### Project Governance

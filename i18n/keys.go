@@ -46,6 +46,7 @@ const (
 const (
 	MsgTokenNameTooLong          = "token.name_too_long"
 	MsgTokenQuotaNegative        = "token.quota_negative"
+	MsgTokenQuotaResetInvalid    = "token.quota_reset_invalid"
 	MsgTokenQuotaExceedMax       = "token.quota_exceed_max"
 	MsgTokenGenerateFailed       = "token.generate_failed"
 	MsgTokenGetInfoFailed        = "token.get_info_failed"

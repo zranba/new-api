@@ -39,6 +39,7 @@ auth.insufficient_privilege: "无权进行此操作，权限不足"
 
 # Token messages
 token.name_too_long: "令牌名称过长"
+token.quota_reset_invalid: "定时重置设置无效，请设置大于零的有限额度、有效的周期和日期，以及 HH:mm 格式的时间。"
 token.quota_negative: "额度值不能为负数"
 token.quota_exceed_max: "额度值超出有效范围，最大值为 {{.Max}}"
 token.generate_failed: "生成令牌失败"

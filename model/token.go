@@ -22,6 +22,13 @@ type Token struct {
 	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
 	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
 	UnlimitedQuota     bool           `json:"unlimited_quota"`
+	QuotaResetPeriod   string         `json:"quota_reset_period" gorm:"type:varchar(16);not null;default:'never'"`
+	QuotaResetAmount   int            `json:"quota_reset_amount" gorm:"not null;default:0"`
+	QuotaResetDay      int            `json:"quota_reset_day" gorm:"not null;default:0"`
+	QuotaResetTime     string         `json:"quota_reset_time" gorm:"type:varchar(5);not null;default:'00:00'"`
+	QuotaResetLastTime int64          `json:"quota_reset_last_time" gorm:"type:bigint;not null;default:0"`
+	QuotaResetNextTime int64          `json:"quota_reset_next_time" gorm:"type:bigint;not null;default:0;index"`
+	QuotaEpoch         int64          `json:"-" gorm:"type:bigint;not null;default:0"`
 	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
 	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
@@ -281,7 +288,7 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 	if !fromDB && common.RedisEnabled {
 		// Try Redis first
 		token, err := cacheGetTokenByKey(key)
-		if err == nil {
+		if err == nil && token.QuotaEpoch == 0 && !token.QuotaResetDue(common.GetTimestamp()) {
 			return token, nil
 		}
 		// Don't return error - fall through to DB
@@ -289,6 +296,12 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 	token = &Token{}
 	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
 		return nil, err
+	}
+	if token.QuotaResetDue(common.GetTimestamp()) {
+		token, _, err = ResetTokenQuotaIfDue(token.Id, common.GetTimestamp())
+		if err != nil {
+			return nil, err
+		}
 	}
 	if common.RedisEnabled {
 		// 冷缓存时用数据库快照初始化；已存在的哈希只刷新 TTL，
@@ -307,13 +320,16 @@ func (token *Token) Insert() error {
 }
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
-func (token *Token) Update() (err error) {
+func (token *Token) Update(columns ...string) (err error) {
 	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog("failed to invalidate token cache before update: " + cacheErr.Error())
 	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups").Updates(token).Error
+	if len(columns) == 0 {
+		columns = []string{"name", "status", "expired_time", "remain_quota", "unlimited_quota",
+			"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups"}
+	}
+	return DB.Model(token).Select(columns).Updates(token).Error
 }
 
 func (token *Token) SelectUpdate() (err error) {
@@ -321,7 +337,11 @@ func (token *Token) SelectUpdate() (err error) {
 		common.SysLog("failed to invalidate token cache before status update: " + cacheErr.Error())
 	}
 	// This can update zero values
-	return DB.Model(token).Select("accessed_time", "status").Updates(token).Error
+	query := DB.Model(token).Where("quota_epoch = ?", token.QuotaEpoch)
+	if token.Status == common.TokenStatusExhausted {
+		query = query.Where("remain_quota <= ? AND status = ?", 0, common.TokenStatusEnabled)
+	}
+	return query.Select("accessed_time", "status").Updates(token).Error
 }
 
 func (token *Token) Delete() (err error) {
@@ -374,9 +394,12 @@ func DeleteTokenById(id int, userId int) (err error) {
 	return token.Delete()
 }
 
-func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
+func IncreaseTokenQuota(tokenId int, key string, quota int, epochs ...int64) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
+	}
+	if len(epochs) > 0 && epochs[0] > 0 {
+		return applyTokenQuotaDelta(tokenId, quota, epochs[0])
 	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
@@ -395,19 +418,15 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 }
 
 func increaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota + ?", quota),
-			"used_quota":    gorm.Expr("used_quota - ?", quota),
-			"accessed_time": common.GetTimestamp(),
-		},
-	).Error
-	return err
+	return applyTokenQuotaDelta(id, quota, 0)
 }
 
-func DecreaseTokenQuota(id int, key string, quota int) (err error) {
+func DecreaseTokenQuota(id int, key string, quota int, epochs ...int64) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
+	}
+	if len(epochs) > 0 && epochs[0] > 0 {
+		return applyTokenQuotaDelta(id, -quota, epochs[0])
 	}
 	if common.RedisEnabled {
 		gopool.Go(func() {
@@ -424,14 +443,7 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 }
 
 func decreaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
-		map[string]any{
-			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
-			"used_quota":    gorm.Expr("used_quota + ?", quota),
-			"accessed_time": common.GetTimestamp(),
-		},
-	).Error
-	return err
+	return applyTokenQuotaDelta(id, -quota, 0)
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination
