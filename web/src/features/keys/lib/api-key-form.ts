@@ -40,7 +40,7 @@ export function getApiKeyFormSchema(
     .object({
       name: z.string().min(1, t('Please enter a name')),
       remain_quota_dollars: z.number().optional(),
-      expired_time: z.date().optional(),
+      expired_time: z.date().nullable(),
       unlimited_quota: z.boolean(),
       quota_reset_period: z
         .enum(['never', 'daily', 'weekly', 'monthly'])
@@ -50,6 +50,7 @@ export function getApiKeyFormSchema(
       quota_reset_time: z.string().optional(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
+      allow_user_quota_query: z.boolean(),
       group: z.string().optional(),
       auto_groups_mode: z.enum(['inherit', 'custom']),
       auto_groups: z.array(z.string()),
@@ -155,7 +156,7 @@ export type ApiKeyFormValues = z.infer<ReturnType<typeof getApiKeyFormSchema>>
 export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   name: '',
   remain_quota_dollars: 10,
-  expired_time: undefined,
+  expired_time: null,
   unlimited_quota: true,
   quota_reset_period: 'never',
   quota_reset_amount_dollars: 10,
@@ -163,6 +164,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   quota_reset_time: '00:00',
   model_limits: [],
   allow_ips: '',
+  allow_user_quota_query: true,
   group: DEFAULT_GROUP,
   auto_groups_mode: 'inherit',
   auto_groups: [],
@@ -213,6 +215,7 @@ export function transformFormDataToPayload(
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
+    allow_user_quota_query: data.allow_user_quota_query,
     group: data.group || '',
     auto_groups:
       data.group === 'auto' && data.auto_groups_mode === 'custom'
@@ -243,9 +246,7 @@ export function transformApiKeyToFormDefaults(
       ? 0
       : quotaUnitsToDollars(apiKey.remain_quota),
     expired_time:
-      apiKey.expired_time > 0
-        ? new Date(apiKey.expired_time * 1000)
-        : undefined,
+      apiKey.expired_time > 0 ? new Date(apiKey.expired_time * 1000) : null,
     unlimited_quota: apiKey.unlimited_quota,
     quota_reset_period: apiKey.quota_reset_period ?? 'never',
     quota_reset_amount_dollars: apiKey.quota_reset_amount
@@ -257,6 +258,7 @@ export function transformApiKeyToFormDefaults(
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],
     allow_ips: apiKey.allow_ips || '',
+    allow_user_quota_query: !!apiKey.allow_user_quota_query,
     group: apiKey.group || DEFAULT_GROUP,
     auto_groups_mode: autoGroupsMode,
     auto_groups: autoGroups,

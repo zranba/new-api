@@ -37,6 +37,8 @@ type Token struct {
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	AutoGroups         string         `json:"-" gorm:"type:text"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
+	// 允许用此令牌查询所属用户的额度；新建令牌默认开启，已有令牌升级后保持关闭
+	AllowUserQuotaQuery bool `json:"allow_user_quota_query"`
 }
 
 func (token *Token) GetAutoGroups() ([]string, error) {
@@ -327,7 +329,8 @@ func (token *Token) Update(columns ...string) (err error) {
 	}
 	if len(columns) == 0 {
 		columns = []string{"name", "status", "expired_time", "remain_quota", "unlimited_quota",
-			"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups"}
+			"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups",
+			"allow_user_quota_query"}
 	}
 	return DB.Model(token).Select(columns).Updates(token).Error
 }
